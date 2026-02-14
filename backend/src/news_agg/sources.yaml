@@ -1,0 +1,332 @@
+# Per-source configuration for the news aggregation pipeline.
+# Each source defines: URL patterns, archive pagination, content selectors, and scraping rules.
+
+ada-derana-en:
+  name: Ada Derana
+  url: https://www.adaderana.lk
+  rss_url: https://www.adaderana.lk/rss.php
+  language: en
+
+  # Sections with their listing/archive pages
+  sections:
+    hot-news:
+      listing_url: https://www.adaderana.lk/hot-news/
+      archive_pattern: "https://www.adaderana.lk/hot-news/?pageno={page}"
+      max_pages: 40
+    sports:
+      listing_url: https://www.adaderana.lk/sports-news/
+      archive_pattern: "https://www.adaderana.lk/sports-news/?pageno={page}"
+      max_pages: 40
+    entertainment:
+      listing_url: https://www.adaderana.lk/entertainment-news/
+      archive_pattern: "https://www.adaderana.lk/entertainment-news/?pageno={page}"
+      max_pages: 40
+    technology:
+      listing_url: https://www.adaderana.lk/technology-news/
+      archive_pattern: "https://www.adaderana.lk/technology-news/?pageno={page}"
+      max_pages: 40
+
+  # Article URL patterns (regex) — used to identify valid article links
+  article_url_patterns:
+    - '/news/\d+/'         # /news/118427/article-slug
+    - '/sports/\d+/'       # /sports/11891/article-slug
+    - '/entertainment/\d+/' # /entertainment/118422/article-slug
+    - '/technology/\d+/'   # /technology/118295/article-slug
+    - 'news\.php\?nid=\d+' # Legacy: news.php?nid=118427
+
+  # URL patterns to skip (not articles)
+  skip_url_patterns:
+    - '\?mode=(beauti|head)'
+    - '/(hot-news|news_archive|sports-news|entertainment-news|technology-news)/?$'
+    - '/morehotnews\.php'
+    - '/moretechnews\.php'
+    - '/more-entertainment-news\.php'
+    - '/search_results\.php'
+
+  # CSS selectors for content extraction (tried in order)
+  selectors:
+    title:
+      - h1.news-heading
+      - h1.article-title
+      - article h1
+      - h1
+    content:
+      - .news-content
+      - "#article-body"
+      - .article-body
+      - .story-text
+      - article .entry-content
+      - article
+    date:
+      - time[datetime]
+      - .news-datestamp
+      - .publish-date
+      - .article-date
+    author:
+      - .author-name
+      - .byline
+      - '[rel="author"]'
+    image:
+      - .article-image img
+      - article img
+      - .featured-image img
+
+  # NID sweep — iterate through sequential article IDs for full coverage
+  # news.php?nid=N redirects to /news/N/slug (canonical URL is captured after redirect)
+  nid_sweep:
+    - url_pattern: "https://www.adaderana.lk/news.php?nid={nid}"
+      start: 10000
+      end: 119000
+      # Stop after this many consecutive 404s (end-of-range detection)
+      # Set high (500) to handle legitimate gaps in article ID ranges
+      max_consecutive_404: 500
+
+  # Meta tags for date extraction
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+    - publishedTime
+
+
+ada-derana-si:
+  name: Ada Derana Sinhala
+  url: https://sinhala.adaderana.lk
+  rss_url: null  # No RSS — uses listing page scrape
+  language: si
+
+  sections:
+    hot-news:
+      listing_url: https://sinhala.adaderana.lk/
+      archive_pattern: "https://sinhala.adaderana.lk/sinhala-hot-news.php?pageno={page}"
+      max_pages: 40
+    sports:
+      listing_url: https://sinhala.adaderana.lk/other-news.php?sid=39
+      archive_pattern: null  # No paginated archive for sports
+      max_pages: 1
+
+  # Article URL patterns
+  article_url_patterns:
+    - '/news/\d+'           # /news/221312
+    - '/sports/\d+'         # /sports/221269/slug
+    - 'news\.php\?nid=\d+'  # Legacy: news.php?nid=221312
+
+  skip_url_patterns:
+    - '\?mode=head'
+    - '/sinhala-hot-news\.php'
+    - '/news_archive\.php'
+    - '/other-news\.php'
+    - '/wada-pitiya\.php'
+    - '/cartoon/'
+    - '/new-parliament\.php'
+    - '/contactus\.php'
+    - '/rsshotnews\.php'
+    - '/360\.php'
+    - '/includes/'
+
+  selectors:
+    title:
+      - h1.news-heading
+      - .news-title h1
+      - article h1
+      - h1
+    content:
+      - .news-content
+      - "#DivNewsContent"
+      - .story-body
+      - .inner-fontstyle
+      - article
+    date:
+      - time[datetime]
+      - .news-datestamp
+      - .publish-date
+    author:
+      - .author-name
+      - .byline
+    image:
+      - .news-photo img
+      - .article-image img
+      - article img
+
+  # NID sweep — iterate through sequential article IDs
+  # /news/N resolves directly (no slug needed for Sinhala)
+  nid_sweep:
+    - url_pattern: "https://sinhala.adaderana.lk/news/{nid}"
+      start: 200000
+      end: 222000
+      max_consecutive_404: 50
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+
+daily-mirror-en:
+  name: Daily Mirror
+  url: https://www.dailymirror.lk
+  rss_url: null  # Cloudflare-protected — no accessible RSS feed
+  language: en
+
+  # Daily Mirror uses offset-based pagination: /section/category_id/{offset}
+  # offset = 0, 30, 60, 90... (30 articles per page)
+  sections:
+    breaking-news:
+      listing_url: https://www.dailymirror.lk/breaking-news/108
+      archive_pattern: "https://www.dailymirror.lk/breaking-news/108/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 40
+    top-stories:
+      listing_url: https://www.dailymirror.lk/top-storys/155
+      archive_pattern: "https://www.dailymirror.lk/top-storys/155/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 40
+    opinion:
+      listing_url: https://www.dailymirror.lk/opinion/231
+      archive_pattern: "https://www.dailymirror.lk/opinion/231/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 20
+    features:
+      listing_url: https://www.dailymirror.lk/features/131
+      archive_pattern: "https://www.dailymirror.lk/features/131/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 20
+    sports:
+      listing_url: https://www.dailymirror.lk/sports
+      archive_pattern: "https://www.dailymirror.lk/sports/322/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 20
+    business:
+      listing_url: https://www.dailymirror.lk/business
+      archive_pattern: "https://www.dailymirror.lk/business-news/273/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 20
+    world-news:
+      listing_url: https://www.dailymirror.lk/world-news/213
+      archive_pattern: "https://www.dailymirror.lk/world-news/213/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 20
+    international:
+      listing_url: https://www.dailymirror.lk/international/107
+      archive_pattern: "https://www.dailymirror.lk/international/107/{page}"
+      page_start: 0
+      page_step: 30
+      max_pages: 20
+
+  # Article URL patterns: /section-name/Title-Slug/category_id-article_id
+  article_url_patterns:
+    - '/[a-z-]+/.+/\d+-\d{5,}'          # /breaking-news/Title/108-332548
+
+  skip_url_patterns:
+    - '/print/'
+    - '/(cartoon|poll|obituaries|podcast|archives|feedback|apps|search|login|connect)/?$'
+    - '/(Weekend_Online|dailyMirror-online|Daily-Mirror-Events)/'
+    - '/(election|special-editions|infographics|fact-check|press-release)/?'
+    - '\.(jpg|png|pdf)$'
+
+  # CSS selectors for content extraction
+  selectors:
+    title:
+      - h1.inner_header
+      - article h1
+      - h1
+    content:
+      - .a-content
+      - .news-content
+      - article .entry-content
+      - article
+    date:
+      - time[datetime]
+      - .publish-date
+    author:
+      - a.inner_other
+      - .author-name
+      - .byline
+    image:
+      - .fotorama img
+      - article img
+
+  # No standard date meta tags — dates are inline text only.
+  # The body-text date waterfall (level 4) handles "14 February 2026 09:13 am" format.
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+
+newsfirst-en:
+  name: NewsFirst
+  url: https://english.newsfirst.lk
+  rss_url: null  # Angular SPA — no RSS feed
+  language: en
+
+  # Listing pages only — no pagination (Angular SPA renders ~10-13 articles per section)
+  sections:
+    latest:
+      listing_url: https://english.newsfirst.lk/latest
+      archive_pattern: null
+      max_pages: 1
+    featured:
+      listing_url: https://english.newsfirst.lk/featured
+      archive_pattern: null
+      max_pages: 1
+    local:
+      listing_url: https://english.newsfirst.lk/local
+      archive_pattern: null
+      max_pages: 1
+    sports:
+      listing_url: https://english.newsfirst.lk/sports
+      archive_pattern: null
+      max_pages: 1
+    world:
+      listing_url: https://english.newsfirst.lk/world
+      archive_pattern: null
+      max_pages: 1
+    business:
+      listing_url: https://english.newsfirst.lk/business
+      archive_pattern: null
+      max_pages: 1
+
+  # Article URLs use date-based paths: /YYYY/MM/DD/article-slug
+  article_url_patterns:
+    - '/\d{4}/\d{2}/\d{2}/[a-z]'
+
+  skip_url_patterns:
+    - '/(search|home|latest|featured|local|sports|world|business|corporate-brief)/?$'
+
+  # CSS selectors for Angular SSR-rendered content
+  selectors:
+    title:
+      - h1.top_stories_header_news
+      - article h1
+      - h1
+    content:
+      - "#testId.new_details"
+      - .new_details
+      - article
+    date:
+      - .author_main span
+    author:
+      - .author_main
+    image:
+      - "#post_img"
+      - article img
+
+  # Date sweep — iterate through calendar dates to discover articles from daily archive pages
+  # Each /YYYY/MM/DD page lists ~10 articles published that day (SSR-rendered, no JS pagination)
+  date_sweep:
+    url_pattern: "https://english.newsfirst.lk/{date}"
+    date_format: "%Y/%m/%d"
+    start_date: "2024-01-01"
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished

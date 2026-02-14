@@ -1,0 +1,85 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: news-agg-postgres
+    environment:
+      POSTGRES_USER: newsagg
+      POSTGRES_PASSWORD: newsagg
+      POSTGRES_DB: newsagg
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newsagg"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Direct Playwright (no VPN) — default for development
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.58.0-noble
+    container_name: news-agg-playwright
+    command: npx --yes playwright@1.58.0 run-server --port 3000 --host 0.0.0.0
+    ports:
+      - "3100:3000"
+    profiles: ["", "direct"]
+    restart: unless-stopped
+
+  # VPN gateway — routes Playwright traffic through ProtonVPN
+  # Usage: docker compose --profile vpn up -d
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: news-agg-gluetun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}
+      - VPN_TYPE=${VPN_TYPE}
+      - OPENVPN_USER=${OPENVPN_USER}
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
+      - FREE_ONLY=${FREE_ONLY}
+    ports:
+      - "3100:3000"    # Playwright server (routed through VPN)
+    profiles: ["vpn"]
+    restart: unless-stopped
+
+  # Playwright through VPN — all browser traffic exits through gluetun
+  # Usage: docker compose --profile vpn up -d
+  playwright-vpn:
+    image: mcr.microsoft.com/playwright:v1.58.0-noble
+    container_name: news-agg-playwright-vpn
+    command: npx --yes playwright@1.58.0 run-server --port 3000 --host 0.0.0.0
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    profiles: ["vpn"]
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: news-agg-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@newsagg.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tor:
+    image: dperson/torproxy
+    container_name: news-agg-tor
+    ports:
+      - "9050:9050"    # SOCKS5 proxy
+      - "8118:8118"    # HTTP proxy (Privoxy)
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
