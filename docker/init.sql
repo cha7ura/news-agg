@@ -46,5 +46,8 @@ INSERT INTO sources (name, slug, url, rss_url, language) VALUES
     ('Ada Derana', 'ada-derana-en', 'https://www.adaderana.lk', 'https://www.adaderana.lk/rss.php', 'en'),
     ('Ada Derana Sinhala', 'ada-derana-si', 'https://sinhala.adaderana.lk', NULL, 'si'),
     ('Daily Mirror', 'daily-mirror-en', 'https://www.dailymirror.lk', NULL, 'en'),
-    ('NewsFirst', 'newsfirst-en', 'https://english.newsfirst.lk', NULL, 'en')
+    ('NewsFirst', 'newsfirst-en', 'https://english.newsfirst.lk', NULL, 'en'),
+    ('The Island', 'island-en', 'https://island.lk', 'https://island.lk/feed/', 'en'),
+    ('EconomyNext', 'economynext-en', 'https://economynext.com', 'https://economynext.com/feed/', 'en'),
+    ('Colombo Gazette', 'colombo-gazette-en', 'https://colombogazette.com', NULL, 'en')
 ON CONFLICT (slug) DO NOTHING;

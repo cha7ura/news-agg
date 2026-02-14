@@ -330,3 +330,185 @@ newsfirst-en:
     - article:published_time
     - og:article:published_time
     - datePublished
+
+
+island-en:
+  name: The Island
+  url: https://island.lk
+  rss_url: https://island.lk/feed/
+  language: en
+
+  # WordPress site — homepage and /page/N for archive (JS-rendered, needs Playwright)
+  sections:
+    latest:
+      listing_url: https://island.lk/
+      archive_pattern: "https://island.lk/page/{page}/"
+      max_pages: 40
+
+  # Article URLs are slug-based: /article-title-slug/
+  article_url_patterns:
+    - '/[a-z][a-z0-9-]+/?$'
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(about|contact|privacy|terms|cookie)/'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  # CSS selectors (WordPress MVP theme)
+  selectors:
+    title:
+      - h1.mvp-post-title
+      - h1.entry-title
+      - h1
+    content:
+      - "#mvp-content-body"
+      - "#mvp-post-content"
+      - .entry-content
+      - article
+    date:
+      - time.post-date[datetime]
+      - time[itemprop="datePublished"]
+      - time[datetime]
+    author:
+      - .mvp-author-info-name a
+      - .mvp-author-info-name
+    image:
+      - .mvp-post-feat-img-wide2 img
+      - article img
+
+  # NID sweep — WordPress ?p=ID redirects to canonical slug URL
+  nid_sweep:
+    - url_pattern: "https://island.lk/?p={nid}"
+      start: 50000
+      end: 200000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+
+economynext-en:
+  name: EconomyNext
+  url: https://economynext.com
+  rss_url: https://economynext.com/feed/
+  language: en
+
+  # Listing pages — /more-news has WordPress pagination /page/N/
+  sections:
+    all:
+      listing_url: https://economynext.com/more-news
+      archive_pattern: "https://economynext.com/more-news/page/{page}/"
+      max_pages: 100
+
+  # Article URLs: /slug-with-article-id/ (ID at end of slug)
+  article_url_patterns:
+    - '^https?://economynext\.com/[a-z][a-z0-9-]+-\d+/$'
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(about|contact|privacy|terms|more-news|brand-voice|video)/?$'
+    - '/(economy|finance|markets|politics|logistics|energy|tech|opinion|sci-tech)/?$'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  # CSS selectors (custom WordPress theme)
+  selectors:
+    title:
+      - h1.story-page-header
+      - article h1
+      - h1
+    content:
+      - .story-page-text-content
+      - .story-page-text-main
+      - article
+    date:
+      - .story-page-pulish-datetime
+      - time[datetime]
+    author:
+      - .single-author a
+      - .single-author
+    image:
+      - .story-page-image img
+      - article img
+
+  # NID sweep — WordPress ?p=ID redirects to canonical URL
+  # ID space is sparse (pages, revisions, images also use IDs)
+  nid_sweep:
+    - url_pattern: "https://economynext.com/?p={nid}"
+      start: 1000
+      end: 265000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+
+colombo-gazette-en:
+  name: Colombo Gazette
+  url: https://colombogazette.com
+  rss_url: null  # Next.js SPA — no RSS feed
+  language: en
+
+  # Category listing pages (SSR-rendered)
+  sections:
+    news:
+      listing_url: https://colombogazette.com/category/news
+      archive_pattern: null
+      max_pages: 1
+    business:
+      listing_url: https://colombogazette.com/category/business
+      archive_pattern: null
+      max_pages: 1
+    world-news:
+      listing_url: https://colombogazette.com/category/world-news
+      archive_pattern: null
+      max_pages: 1
+    sports:
+      listing_url: https://colombogazette.com/category/sports
+      archive_pattern: null
+      max_pages: 1
+    entertainment:
+      listing_url: https://colombogazette.com/category/entertainment
+      archive_pattern: null
+      max_pages: 1
+    breaking-news:
+      listing_url: https://colombogazette.com/category/breaking-news
+      archive_pattern: null
+      max_pages: 1
+
+  # Article URLs: /YYYY/MM/DD/slug
+  article_url_patterns:
+    - '/\d{4}/\d{2}/\d{2}/[a-z]'
+
+  skip_url_patterns:
+    - '/(category|about|contact|privacy|terms|cookie-policy|copyright-policy)/?$'
+
+  # CSS selectors (Next.js with Tailwind — .prose wraps article text)
+  selectors:
+    title:
+      - h1
+    content:
+      - .prose
+      - article
+    date:
+      - time[datetime]
+    author:
+      - .author-name
+    image:
+      - article img
+
+  # Date sweep — iterate through calendar dates (same pattern as NewsFirst)
+  date_sweep:
+    url_pattern: "https://colombogazette.com/{date}"
+    date_format: "%Y/%m/%d"
+    start_date: "2020-01-01"
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished

@@ -14,6 +14,10 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #768 | 3:16 AM | ✅ | Adjusted NewsFirst Date Sweep Start from 2010 to 2020 | ~431 |
+| #747 | 3:06 AM | ✅ | Ada Derana Sinhala NID sweep range expanded for comprehensive historical coverage | ~454 |
+| #705 | 2:27 AM | 🔵 | Reviewed Application Settings with Proxy Support and Optimized Rate Limiting | ~441 |
+| #702 | " | 🔵 | Reviewed Application Configuration with Proxy Support and Rate Limiting | ~454 |
 | #658 | 1:12 AM | 🟣 | News First English source configuration added to sources.yaml | ~557 |
 | #618 | 12:50 AM | 🔵 | Reviewed Source Configuration API Layer with YAML-Based Extensibility | ~467 |
 </claude-mem-context>
