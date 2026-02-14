@@ -17,10 +17,11 @@ from news_agg.models import ArticleCreate, Source
 _pool: asyncpg.Pool | None = None
 
 
-async def get_pool() -> asyncpg.Pool:
+async def get_pool(database_url: str | None = None) -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=10)
+        url = database_url or settings.database_url
+        _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
     return _pool
 
 

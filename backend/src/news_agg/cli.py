@@ -5,7 +5,9 @@ Usage:
     news-agg ingest --source ada-derana-si --limit 20 --concurrency 3
     news-agg ingest --source ada-derana-en --backfill --pages 10 --concurrency 5
     news-agg ingest --source ada-derana-en --nid-sweep --concurrency 5
-    news-agg check
+    news-agg ingest --source newsfirst-en --limit 5 --supabase
+    news-agg check --supabase
+    news-agg migrate
 """
 
 from __future__ import annotations
@@ -34,8 +36,11 @@ def cli() -> None:
 @click.option("--nid-sweep", is_flag=True, help="Sweep through sequential article IDs for full coverage")
 @click.option("--date-sweep", is_flag=True, help="Sweep through calendar dates for date-based archive pages")
 @click.option("--days", default=None, type=int, help="Limit date sweep to last N days (default: full range)")
-def ingest(source: str | None, limit: int, concurrency: int, backfill: bool, pages: int, nid_sweep: bool, date_sweep: bool, days: int | None) -> None:
+@click.option("--supabase", is_flag=True, help="Use Supabase DB instead of local")
+def ingest(source: str | None, limit: int, concurrency: int, backfill: bool, pages: int, nid_sweep: bool, date_sweep: bool, days: int | None, supabase: bool) -> None:
     """Ingest articles from news sources."""
+    if supabase:
+        _use_supabase()
     asyncio.run(_ingest(source, limit, concurrency, backfill, pages, nid_sweep, date_sweep, days))
 
 
@@ -90,8 +95,11 @@ async def _ingest(
 
 
 @cli.command()
-def check() -> None:
+@click.option("--supabase", is_flag=True, help="Use Supabase DB instead of local")
+def check(supabase: bool) -> None:
     """Show DB stats per source."""
+    if supabase:
+        _use_supabase()
     asyncio.run(_check())
 
 
@@ -117,6 +125,121 @@ async def _check() -> None:
         click.echo(f"\n  {GREEN}Total: {total} articles{RESET}\n")
     finally:
         await close_pool()
+
+
+def _use_supabase() -> None:
+    """Swap database_url to Supabase before any pool creation."""
+    from news_agg.config import settings
+
+    if not settings.supabase_database_url:
+        click.echo("Error: SUPABASE_DATABASE_URL not set in .env")
+        raise SystemExit(1)
+    settings.database_url = settings.supabase_database_url
+    log.info(f"{BOLD}Using Supabase DB{RESET}")
+
+
+@cli.command()
+def migrate() -> None:
+    """Migrate data from local DB to Supabase."""
+    asyncio.run(_migrate())
+
+
+async def _migrate() -> None:
+    from pathlib import Path
+
+    import asyncpg
+
+    from news_agg.config import settings
+
+    if not settings.supabase_database_url:
+        click.echo("Error: SUPABASE_DATABASE_URL not set in .env")
+        return
+
+    # Read schema SQL
+    schema_path = Path(__file__).resolve().parents[3] / "docker" / "init.sql"
+    if not schema_path.exists():
+        click.echo(f"Error: Schema file not found at {schema_path}")
+        return
+    schema_sql = schema_path.read_text()
+
+    click.echo(f"\n{BOLD}Migrating to Supabase{RESET}\n")
+
+    src_pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=5)
+    dst_pool = await asyncpg.create_pool(settings.supabase_database_url, min_size=2, max_size=5)
+
+    try:
+        # 1. Apply schema
+        click.echo(f"  {DIM}Applying schema...{RESET}")
+        await dst_pool.execute(schema_sql)
+        click.echo(f"  {GREEN}✓{RESET} Schema applied")
+
+        # 2. Copy sources (delete seed data first so IDs match local DB)
+        click.echo(f"  {DIM}Copying sources...{RESET}")
+        await dst_pool.execute("DELETE FROM sources WHERE true")
+        src_sources = await src_pool.fetch("SELECT * FROM sources ORDER BY name")
+        for s in src_sources:
+            await dst_pool.execute(
+                """
+                INSERT INTO sources (id, name, slug, url, rss_url, language, is_active, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (slug) DO NOTHING
+                """,
+                s["id"], s["name"], s["slug"], s["url"], s["rss_url"],
+                s["language"], s["is_active"], s["created_at"], s["updated_at"],
+            )
+        click.echo(f"  {GREEN}✓{RESET} {len(src_sources)} sources copied")
+
+        # 3. Copy articles in batches using executemany (much faster over network)
+        total = await src_pool.fetchval("SELECT COUNT(*) FROM articles")
+        dst_before = await dst_pool.fetchval("SELECT COUNT(*) FROM articles")
+        click.echo(f"  {DIM}Copying {total} articles ({dst_before} already in target)...{RESET}")
+
+        batch_size = 500
+        offset = 0
+
+        insert_sql = """
+            INSERT INTO articles (
+                source_id, url, title, content, excerpt, image_url, author,
+                published_at, scraped_at, language, original_language, is_processed,
+                created_at, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            ON CONFLICT (url) DO NOTHING
+        """
+
+        while offset < total:
+            rows = await src_pool.fetch(
+                """
+                SELECT source_id, url, title, content, excerpt, image_url, author,
+                       published_at, scraped_at, language, original_language, is_processed,
+                       created_at, updated_at
+                FROM articles
+                ORDER BY created_at
+                LIMIT $1 OFFSET $2
+                """,
+                batch_size, offset,
+            )
+
+            args = [
+                (r["source_id"], r["url"], r["title"], r["content"],
+                 r["excerpt"], r["image_url"], r["author"], r["published_at"],
+                 r["scraped_at"], r["language"], r["original_language"],
+                 r["is_processed"], r["created_at"], r["updated_at"])
+                for r in rows
+            ]
+            await dst_pool.executemany(insert_sql, args)
+
+            offset += batch_size
+            click.echo(
+                f"  {GREEN}▸{RESET} {min(offset, total)}/{total}"
+            )
+
+        dst_after = await dst_pool.fetchval("SELECT COUNT(*) FROM articles")
+        inserted = dst_after - dst_before
+        click.echo(f"\n  {GREEN}✓{RESET} Migration complete: {inserted} new articles copied ({dst_after} total in Supabase)\n")
+
+    finally:
+        await src_pool.close()
+        await dst_pool.close()
 
 
 if __name__ == "__main__":

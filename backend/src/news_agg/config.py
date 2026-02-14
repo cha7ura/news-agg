@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "postgresql://newsagg:newsagg@localhost:5432/newsagg"
+    supabase_database_url: str = ""
     playwright_ws_url: str = "ws://localhost:3100"
     log_level: str = "info"
     rate_limit_ms: int = 500
