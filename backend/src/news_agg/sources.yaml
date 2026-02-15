@@ -512,3 +512,72 @@ colombo-gazette-en:
     - article:published_time
     - og:article:published_time
     - datePublished
+
+
+news19-si:
+  name: News19
+  url: https://www.news19.lk
+  rss_url: https://www.news19.lk/feed/
+  language: si
+
+  # WordPress with tagDiv Newspaper theme — category pages for listing
+  sections:
+    news:
+      listing_url: https://www.news19.lk/category/news/
+      archive_pattern: "https://www.news19.lk/category/news/page/{page}/"
+      max_pages: 40
+    features:
+      listing_url: https://www.news19.lk/category/features/
+      archive_pattern: "https://www.news19.lk/category/features/page/{page}/"
+      max_pages: 40
+    foreign:
+      listing_url: https://www.news19.lk/category/foreign/
+      archive_pattern: "https://www.news19.lk/category/foreign/page/{page}/"
+      max_pages: 40
+    sports:
+      listing_url: https://www.news19.lk/category/sports/
+      archive_pattern: "https://www.news19.lk/category/sports/page/{page}/"
+      max_pages: 40
+
+  # Article URLs: slug-based (e.g., /mahawa-chairman-accuses-a-famous-channel/)
+  article_url_patterns:
+    - '/[a-z][a-z0-9-]+/?$'
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(about-us|contact|advertising|privacy|terms|cookie)/'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  # CSS selectors (tagDiv Newspaper theme)
+  selectors:
+    title:
+      - h1.tdb-title-text
+      - h1.entry-title
+      - h1
+    content:
+      - .td-post-content
+      - .tdb_single_content .tdb-block-inner
+      - article
+    date:
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - a.tdb-author-name
+      - .tdb-author-name
+    image:
+      - .td-post-featured-image img
+      - img.entry-thumb
+      - article img
+
+  # NID sweep — WordPress ?p=ID redirects to canonical slug URL
+  nid_sweep:
+    - url_pattern: "https://www.news19.lk/?p={nid}"
+      start: 100000
+      end: 200000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished

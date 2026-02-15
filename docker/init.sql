@@ -49,5 +49,6 @@ INSERT INTO sources (name, slug, url, rss_url, language) VALUES
     ('NewsFirst', 'newsfirst-en', 'https://english.newsfirst.lk', NULL, 'en'),
     ('The Island', 'island-en', 'https://island.lk', 'https://island.lk/feed/', 'en'),
     ('EconomyNext', 'economynext-en', 'https://economynext.com', 'https://economynext.com/feed/', 'en'),
-    ('Colombo Gazette', 'colombo-gazette-en', 'https://colombogazette.com', NULL, 'en')
+    ('Colombo Gazette', 'colombo-gazette-en', 'https://colombogazette.com', NULL, 'en'),
+    ('News19', 'news19-si', 'https://www.news19.lk', 'https://www.news19.lk/feed/', 'si')
 ON CONFLICT (slug) DO NOTHING;

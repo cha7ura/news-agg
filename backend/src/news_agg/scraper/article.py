@@ -80,6 +80,10 @@ _DATELINE_NEWS1ST_RE = re.compile(
     r"^COLOMBO\s*\(News\s?1st\)\s*[;:–-]\s*",
     re.IGNORECASE,
 )
+# Dateline pattern D: "ECONOMYNEXT –" / "ECONOMYNEXT-" (wire-service prefix)
+_DATELINE_ECONOMYNEXT_RE = re.compile(
+    r"^ECONOMYNEXT\s*[–—-]\s*",
+)
 
 # Single page.evaluate() call to extract everything at once
 # Ported from pipeline.ts lines 336-424
@@ -324,7 +328,7 @@ async def scrape_article_page(
             if not author:
                 author = m_byline.group(1).strip()
             content = content[m_byline.end():]
-        for pat in (_DATELINE_COLOMBO_RE, _DATELINE_SHORT_RE, _DATELINE_NEWS1ST_RE):
+        for pat in (_DATELINE_COLOMBO_RE, _DATELINE_SHORT_RE, _DATELINE_NEWS1ST_RE, _DATELINE_ECONOMYNEXT_RE):
             m_dateline = pat.match(content)
             if m_dateline:
                 content = content[m_dateline.end():]

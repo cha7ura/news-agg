@@ -9,6 +9,10 @@ Async news scraping pipeline for Sri Lankan media. Collects articles from multip
 | Ada Derana | English | RSS + NID sweep |
 | Ada Derana Sinhala | Sinhala | Listing page + NID sweep |
 | NewsFirst | English | Listing page + date sweep |
+| The Island | English | RSS + NID sweep |
+| EconomyNext | English | RSS + NID sweep |
+| Colombo Gazette | English | Date sweep |
+| News19 | Sinhala | RSS + NID sweep |
 
 ## Prerequisites
 
@@ -57,6 +61,10 @@ uv sync
 uv run news-agg ingest --source ada-derana-en --limit 20
 uv run news-agg ingest --source ada-derana-si --limit 20
 uv run news-agg ingest --source newsfirst-en --limit 20
+uv run news-agg ingest --source island-en --limit 20
+uv run news-agg ingest --source economynext-en --limit 20
+uv run news-agg ingest --source colombo-gazette-en --limit 20
+uv run news-agg ingest --source news19-si --limit 20
 ```
 
 ### Backfill — Ada Derana NID sweep
@@ -83,22 +91,52 @@ uv run news-agg ingest --source newsfirst-en --date-sweep --concurrency 5
 uv run news-agg ingest --source newsfirst-en --date-sweep --days 30 --concurrency 3
 ```
 
+### Backfill — NID sweep (The Island, EconomyNext, News19)
+
+WordPress `?p=ID` redirect sweeps for full historical coverage:
+
+```bash
+uv run news-agg ingest --nid-sweep --source island-en --concurrency 5
+uv run news-agg ingest --nid-sweep --source economynext-en --concurrency 5
+uv run news-agg ingest --nid-sweep --source news19-si --concurrency 5
+```
+
 ### Backfill — Archive page crawl
 
-Paginated archive scraping for Ada Derana:
+Paginated archive scraping:
 
 ```bash
 uv run news-agg ingest --source ada-derana-en --backfill --pages 40 --concurrency 5
+uv run news-agg ingest --source island-en --backfill --pages 40 --concurrency 5
+uv run news-agg ingest --source economynext-en --backfill --pages 100 --concurrency 5
+uv run news-agg ingest --source news19-si --backfill --pages 40 --concurrency 5
+```
+
+### Backfill — Date sweep (Colombo Gazette)
+
+Calendar-based archive crawl (from 2020):
+
+```bash
+uv run news-agg ingest --source colombo-gazette-en --date-sweep --concurrency 5
 ```
 
 ### Run all backfills concurrently (Supabase)
 
-Run all three sweeps in parallel (5 concurrent pages each):
-
 ```bash
+# Phase 1: Archive/date sweeps (faster first pass)
 uv run news-agg ingest --nid-sweep --source ada-derana-en --concurrency 5 --supabase &
 uv run news-agg ingest --nid-sweep --source ada-derana-si --concurrency 5 --supabase &
 uv run news-agg ingest --source newsfirst-en --date-sweep --concurrency 5 --supabase &
+uv run news-agg ingest --source island-en --backfill --pages 40 --concurrency 5 --supabase &
+uv run news-agg ingest --source economynext-en --backfill --pages 100 --concurrency 5 --supabase &
+uv run news-agg ingest --source colombo-gazette-en --date-sweep --concurrency 5 --supabase &
+uv run news-agg ingest --source news19-si --backfill --pages 40 --concurrency 5 --supabase &
+wait
+
+# Phase 2: NID sweeps (fills gaps after archive sweeps)
+uv run news-agg ingest --nid-sweep --source island-en --concurrency 5 --supabase &
+uv run news-agg ingest --nid-sweep --source economynext-en --concurrency 5 --supabase &
+uv run news-agg ingest --nid-sweep --source news19-si --concurrency 5 --supabase &
 wait
 ```
 
@@ -116,6 +154,12 @@ uv run news-agg check --supabase
 
 ```bash
 uv run news-agg migrate
+```
+
+### Backup Supabase to local
+
+```bash
+uv run news-agg backup
 ```
 
 ### Check database stats
