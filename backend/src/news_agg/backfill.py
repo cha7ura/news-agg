@@ -368,6 +368,7 @@ async def run_backfill(
 async def run_nid_sweep(
     source_slug: str | None = None,
     concurrency: int = 3,
+    browser=None,
 ) -> dict:
     """Sweep through sequential NID ranges to discover every article.
 
@@ -386,13 +387,14 @@ async def run_nid_sweep(
     else:
         sources = await get_active_sources(pool)
 
-    browser = None
-    try:
-        browser = await connect_browser()
-        log.info(f"{GREEN}✓{RESET} Playwright connected")
-    except Exception as e:
-        log.error(f"{RED}✗{RESET} Playwright connection failed: {e}")
-        return {"error": f"Playwright connection failed: {e}"}
+    own_browser = browser is None
+    if own_browser:
+        try:
+            browser = await connect_browser()
+            log.info(f"{GREEN}✓{RESET} Playwright connected")
+        except Exception as e:
+            log.error(f"{RED}✗{RESET} Playwright connection failed: {e}")
+            return {"error": f"Playwright connection failed: {e}"}
 
     total_inserted = 0
     total_skipped = 0
@@ -554,9 +556,9 @@ async def run_nid_sweep(
                 )
 
     finally:
-        if browser:
+        if own_browser and browser:
             await browser.close()
-        await close_playwright()
+            await close_playwright()
 
     log.info(
         f"{GREEN}▸{RESET} NID sweep complete: {total_inserted} inserted, "
@@ -573,6 +575,7 @@ async def run_date_sweep(
     source_slug: str | None = None,
     concurrency: int = 3,
     days: int | None = None,
+    browser=None,
 ) -> dict:
     """Sweep through calendar dates to discover articles from date-based archive pages.
 
@@ -584,6 +587,7 @@ async def run_date_sweep(
         source_slug: Specific source to sweep (None = all with date_sweep config).
         concurrency: Number of concurrent browser pages for scraping.
         days: Limit to last N days (None = full range from start_date).
+        browser: Optional shared browser — if None, creates/closes its own.
     """
     pool = await get_pool()
 
@@ -596,13 +600,14 @@ async def run_date_sweep(
     else:
         sources = await get_active_sources(pool)
 
-    browser = None
-    try:
-        browser = await connect_browser()
-        log.info(f"{GREEN}✓{RESET} Playwright connected")
-    except Exception as e:
-        log.error(f"{RED}✗{RESET} Playwright connection failed: {e}")
-        return {"error": f"Playwright connection failed: {e}"}
+    own_browser = browser is None
+    if own_browser:
+        try:
+            browser = await connect_browser()
+            log.info(f"{GREEN}✓{RESET} Playwright connected")
+        except Exception as e:
+            log.error(f"{RED}✗{RESET} Playwright connection failed: {e}")
+            return {"error": f"Playwright connection failed: {e}"}
 
     total_inserted = 0
     total_skipped = 0
@@ -764,9 +769,9 @@ async def run_date_sweep(
             )
 
     finally:
-        if browser:
+        if own_browser and browser:
             await browser.close()
-        await close_playwright()
+            await close_playwright()
 
     log.info(
         f"{GREEN}▸{RESET} Date sweep complete: {total_inserted} inserted, "
@@ -828,8 +833,12 @@ async def run_auto_backfill(
         )
         return {"inserted": total_inserted, "skipped": total_skipped, "not_found": total_not_found}
 
-    # Multi-source → interleaved archive, then sequential NID/date sweeps
-    # Phase 1: Collect methods per source
+    # Multi-source → all phases run concurrently with shared browser.
+    # Archive uses intelligent scheduler; NID/date sweeps run independently.
+    # This prevents slow archive sources (e.g. CF-protected Daily Mirror)
+    # from blocking NID/date sweeps for faster sources.
+
+    # Collect methods per source
     archive_sources: list[tuple[Source, int]] = []  # (source, archive_pages)
     nid_sweep_sources: list[Source] = []
     date_sweep_sources: list[tuple[Source, int | None]] = []  # (source, days)
@@ -854,27 +863,51 @@ async def run_auto_backfill(
                 sd = days or method.get("days")
                 date_sweep_sources.append((source, sd))
 
-    # Phase 2: Interleaved archive backfill
-    if archive_sources:
-        log.info(f"{BOLD}ARCHIVE BACKFILL{RESET} — {len(archive_sources)} sources (interleaved)")
-        result = await _backfill_archive_interleaved(archive_sources, concurrency)
-        total_inserted += result.get("inserted", 0)
-        total_skipped += result.get("skipped", 0)
+    # Create shared browser for all concurrent phases
+    browser = await connect_browser()
+    log.info(f"{GREEN}✓{RESET} Playwright connected (shared across all phases)")
 
-    # Phase 3: NID sweeps (per-source, sequential)
-    for source in nid_sweep_sources:
-        log.info(f"  {DIM}Running NID sweep for {source.slug}...{RESET}")
-        result = await run_nid_sweep(source.slug, concurrency)
-        if "error" not in result:
-            total_inserted += result.get("inserted", 0)
-            total_not_found += result.get("not_found", 0)
+    try:
+        tasks: list[asyncio.Task] = []
+        sweep_concurrency = max(1, min(concurrency, 3))
 
-    # Phase 4: Date sweeps (per-source, sequential)
-    for source, sweep_days in date_sweep_sources:
-        log.info(f"  {DIM}Running date sweep for {source.slug}...{RESET}")
-        result = await run_date_sweep(source.slug, concurrency, sweep_days)
-        if "error" not in result:
-            total_inserted += result.get("inserted", 0)
+        # Archive phase (interleaved via scheduler)
+        if archive_sources:
+            log.info(f"{BOLD}ARCHIVE BACKFILL{RESET} — {len(archive_sources)} sources (interleaved)")
+            tasks.append(asyncio.create_task(
+                _backfill_archive_interleaved(archive_sources, concurrency, browser=browser)
+            ))
+
+        # NID sweeps — all run concurrently with reduced per-source concurrency
+        for source in nid_sweep_sources:
+            log.info(f"  {DIM}Starting NID sweep for {source.slug} (concurrency={sweep_concurrency})...{RESET}")
+            tasks.append(asyncio.create_task(
+                run_nid_sweep(source.slug, sweep_concurrency, browser=browser)
+            ))
+
+        # Date sweeps — all run concurrently
+        for source, sweep_days in date_sweep_sources:
+            log.info(f"  {DIM}Starting date sweep for {source.slug} (concurrency={sweep_concurrency})...{RESET}")
+            tasks.append(asyncio.create_task(
+                run_date_sweep(source.slug, sweep_concurrency, sweep_days, browser=browser)
+            ))
+
+        # Run ALL phases concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Aggregate results
+        for result in results:
+            if isinstance(result, Exception):
+                log.error(f"  {RED}✗{RESET} Phase failed: {result}")
+                continue
+            if isinstance(result, dict):
+                total_inserted += result.get("inserted", 0)
+                total_skipped += result.get("skipped", 0)
+                total_not_found += result.get("not_found", 0)
+
+    finally:
+        await browser.close()
+        await close_playwright()
 
     log.info(
         f"{GREEN}▸{RESET} Auto backfill complete: {total_inserted} inserted, "
@@ -913,6 +946,7 @@ async def _run_single_method(
 async def _backfill_archive_interleaved(
     archive_sources: list[tuple[Source, int]],
     concurrency: int,
+    browser=None,
 ) -> dict:
     """Run archive backfill across multiple sources with intelligent scheduling.
 
@@ -920,8 +954,10 @@ async def _backfill_archive_interleaved(
     interleaved across sources using the IntelligentScheduler.
     """
     pool = await get_pool()
-    browser = await connect_browser()
-    log.info(f"{GREEN}✓{RESET} Playwright connected")
+    own_browser = browser is None
+    if own_browser:
+        browser = await connect_browser()
+        log.info(f"{GREEN}✓{RESET} Playwright connected")
 
     try:
         scheduler = IntelligentScheduler(browser, pool, global_concurrency=concurrency)
@@ -993,8 +1029,9 @@ async def _backfill_archive_interleaved(
         await worker_task
         await scheduler.cleanup()
     finally:
-        await browser.close()
-        await close_playwright()
+        if own_browser:
+            await browser.close()
+            await close_playwright()
 
     total_inserted = sum(c["inserted"] for c in counts.values())
     total_skipped = sum(c["skipped_duplicate"] + c["skipped_no_date"] for c in counts.values())
