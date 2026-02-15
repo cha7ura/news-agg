@@ -53,7 +53,22 @@ INSERT INTO sources (name, slug, url, rss_url, language) VALUES
     ('News19', 'news19-si', 'https://www.news19.lk', 'https://www.news19.lk/feed/', 'si'),
     ('Sunday Observer', 'sunday-observer-en', 'https://www.sundayobserver.lk', 'https://www.sundayobserver.lk/feed/', 'en'),
     ('Lanka News Web', 'lanka-news-web-en', 'https://lankanewsweb.net', 'https://lankanewsweb.net/feed/', 'en'),
-    ('Lanka Truth', 'lankatruth-si', 'https://lankatruth.com/si', NULL, 'si')
+    ('Lanka Truth', 'lankatruth-si', 'https://lankatruth.com/si', NULL, 'si'),
+    -- Tier 1
+    ('Hiru News', 'hiru-news-en', 'https://hirunews.lk', NULL, 'en'),
+    ('Daily FT', 'ft-en', 'https://www.ft.lk', NULL, 'en'),
+    ('Lankadeepa', 'lankadeepa-si', 'https://www.lankadeepa.lk', NULL, 'si'),
+    ('Divaina', 'divaina-si', 'https://www.divaina.lk', NULL, 'si'),
+    -- Tier 2
+    ('Colombo Telegraph', 'colombo-telegraph-en', 'https://www.colombotelegraph.com', NULL, 'en'),
+    ('Daily News', 'daily-news-en', 'https://www.dailynews.lk', NULL, 'en'),
+    ('Dinamina', 'dinamina-si', 'https://www.dinamina.lk', NULL, 'si'),
+    -- Tier 3
+    ('Deshaya', 'deshaya-si', 'https://deshaya.lk', NULL, 'si'),
+    ('NewsNow', 'newsnow-si', 'https://www.newsnow.lk', 'https://www.newsnow.lk/feed/', 'si'),
+    ('Lakresa', 'lakresa-si', 'https://lakresa.net', 'https://lakresa.net/feed/', 'si'),
+    ('News.lk', 'news-lk-en', 'https://news.lk', NULL, 'en'),
+    ('Ada.lk', 'ada-si', 'https://www.ada.lk', NULL, 'si')
 ON CONFLICT (slug) DO NOTHING;
 
 -- Dead links: track failed scrape URLs with graduated retry

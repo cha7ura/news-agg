@@ -834,3 +834,719 @@ lankatruth-si:
   backfill:
     methods:
       - type: nid_sweep
+
+
+# ─── Tier 1: High-Value Sources ──────────────────────────────────────────────
+
+hiru-news-en:
+  name: Hiru News
+  url: https://hirunews.lk
+  rss_url: null  # Custom CMS, no RSS
+  language: en
+
+  sections:
+    latest:
+      listing_url: https://hirunews.lk/en/
+      archive_pattern: null
+      max_pages: 1
+
+  article_url_patterns:
+    - '/(english|en)/(\w+/)?\d+/'    # /english/446676/slug or /english/sports/446538/slug
+
+  skip_url_patterns:
+    - '/(english|en)/?$'
+    - '/news_listing\.php'
+    - '/contact'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - h1.head-title
+      - h1
+    content:
+      - ".description-content#this-article"
+      - .description-content
+      - .description
+    date:
+      - ".update-wrp-lg span:nth-child(2)"
+      - time[datetime]
+    author:
+      - .author-name
+    image:
+      - .featured-image img
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.hirunews.lk/english/{nid}"
+      start: 1000
+      end: 60000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep
+
+
+ft-en:
+  name: Daily FT
+  url: https://www.ft.lk
+  rss_url: null
+  language: en
+
+  sections:
+    front-page:
+      listing_url: https://www.ft.lk/front-page/44
+      archive_pattern: null
+      max_pages: 1
+    business:
+      listing_url: https://www.ft.lk/business/34
+      archive_pattern: null
+      max_pages: 1
+    news:
+      listing_url: https://www.ft.lk/news/56
+      archive_pattern: null
+      max_pages: 1
+
+  article_url_patterns:
+    - '/[a-z-]+/.+/\d+-\d+'  # /front-page/Title/44-773750
+
+  skip_url_patterns:
+    - '/(columns|cartoon|e-edition|advertise|contact|aboutus|privacy)/?$'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - h1.innerheader
+      - h1
+    content:
+      - .inner-content
+      - article
+    date:
+      - .gtime
+      - time[datetime]
+    author:
+      - .author-name
+    image:
+      - .inner-content img
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.ft.lk/?p={nid}"
+      start: 500000
+      end: 775000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep
+
+
+lankadeepa-si:
+  name: Lankadeepa
+  url: https://www.lankadeepa.lk
+  rss_url: https://www.lankadeepa.lk/rss
+  language: si
+
+  # Lake House custom CMS — listing pages by section
+  sections:
+    latest-news:
+      listing_url: https://www.lankadeepa.lk/latest-news/1
+      archive_pattern: null
+      max_pages: 1
+    news:
+      listing_url: https://www.lankadeepa.lk/news/101
+      archive_pattern: null
+      max_pages: 1
+    world-news:
+      listing_url: https://www.lankadeepa.lk/world_news/14
+      archive_pattern: null
+      max_pages: 1
+    sports:
+      listing_url: https://www.lankadeepa.lk/sports/3
+      archive_pattern: null
+      max_pages: 1
+
+  # URL pattern: /section/slug/cat_id-article_id
+  article_url_patterns:
+    - '/[a-z_-]+/.+/\d+-\d+'  # /latest-news/slug/1-688189
+
+  skip_url_patterns:
+    - '/(rss|feedback|cartoon|saradam|rasa-windana)/'
+    - '/(latest-news|latest_news|news|world_news|sports)/\d+/?$'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - h1.article-title
+      - h1
+    content:
+      - .article-body
+      - article
+    date:
+      - .article-meta
+    author:
+      - .author-name
+    image:
+      - .article-body img
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.lankadeepa.lk/latest_news/x/1-{nid}"
+      start: 500000
+      end: 690000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep
+
+
+divaina-si:
+  name: Divaina
+  url: https://www.divaina.lk
+  rss_url: null
+  language: si
+
+  # Custom CMS — section-based listing pages
+  sections:
+    main-news:
+      listing_url: https://www.divaina.lk/main-news
+      archive_pattern: null
+      max_pages: 1
+    foreign-news:
+      listing_url: https://www.divaina.lk/foreign-news
+      archive_pattern: null
+      max_pages: 1
+    business-news:
+      listing_url: https://www.divaina.lk/business-news
+      archive_pattern: null
+      max_pages: 1
+    provincial-news:
+      listing_url: https://www.divaina.lk/provincial-news
+      archive_pattern: null
+      max_pages: 1
+
+  article_url_patterns:
+    - '/[a-z-]+/\d+'  # /main-news/43015
+
+  skip_url_patterns:
+    - '/(cartoons|sitemap|contact|about)/'
+    - '/[a-z-]+/?$'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - h1
+    content:
+      - .article-body
+      - .news-content
+      - article
+    date:
+      - .article-meta
+      - time[datetime]
+    author:
+      - .author-name
+    image:
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.divaina.lk/main-news/{nid}"
+      start: 1000
+      end: 44000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep
+
+
+# ─── Tier 2: Good Value Sources ──────────────────────────────────────────────
+
+colombo-telegraph-en:
+  name: Colombo Telegraph
+  url: https://www.colombotelegraph.com
+  rss_url: null
+  language: en
+
+  # WordPress Newsroom theme
+  sections:
+    latest:
+      listing_url: https://www.colombotelegraph.com/
+      archive_pattern: null
+      max_pages: 1
+
+  article_url_patterns:
+    - '/index\.php/[a-z]'  # /index.php/article-slug
+
+  skip_url_patterns:
+    - '/index\.php/(author|category|tag|page)/'
+    - '/(wp-admin|wp-login|feed)/'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - h1.entry-title.eltd-post-title
+      - h1.entry-title
+      - h1
+    content:
+      - .pf-content
+      - .eltd-post-text-inner
+      - .eltd-post-content
+      - article
+    date:
+      - .eltd-post-info-date.entry-date
+      - time[datetime]
+    author:
+      - a.eltd-post-info-author-link
+      - .author-name
+    image:
+      - .eltd-post-image img
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.colombotelegraph.com/?p={nid}"
+      start: 50000
+      end: 185000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep
+
+
+daily-news-en:
+  name: Daily News
+  url: https://dailynews.lk
+  rss_url: https://dailynews.lk/feed/
+  language: en
+
+  # WordPress Soledad/Penci theme — date-based URLs
+  sections:
+    latest:
+      listing_url: https://dailynews.lk/
+      archive_pattern: "https://dailynews.lk/page/{page}/"
+      max_pages: 40
+
+  article_url_patterns:
+    - '/\d{4}/\d{2}/\d{2}/[a-z-]+/\d+/'  # /2026/02/14/section/951200/slug
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(about|contact|privacy|archives|e-edition|advertise)/?$'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  selectors:
+    title:
+      - h1.post-title.single-post-title.entry-title
+      - h1.entry-title
+      - h1
+    content:
+      - .inner-post-entry.entry-content
+      - "#penci-post-entry-inner"
+      - .entry-content
+      - article
+    date:
+      - time.entry-date.published[datetime]
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - a.author-url
+      - .author-italic
+    image:
+      - .post-image img
+      - article img
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+
+
+dinamina-si:
+  name: Dinamina
+  url: https://www.dinamina.lk
+  rss_url: https://www.dinamina.lk/feed/
+  language: si
+
+  # Same Soledad/Penci theme as Daily News (Lake House sibling)
+  sections:
+    latest:
+      listing_url: https://www.dinamina.lk/
+      archive_pattern: "https://www.dinamina.lk/page/{page}/"
+      max_pages: 40
+
+  article_url_patterns:
+    - '/\d{4}/\d{2}/\d{2}/[a-z-]+/\d+/'  # /2026/01/27/local/259205/slug
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(about|contact|privacy|archives|awards-accolades)/?$'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  selectors:
+    title:
+      - h1.post-title.single-post-title.entry-title
+      - h1.entry-title
+      - h1
+    content:
+      - .inner-post-entry.entry-content
+      - "#penci-post-entry-inner"
+      - .entry-content
+      - article
+    date:
+      - time.entry-date.published[datetime]
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - a.author-url
+      - .author-italic
+    image:
+      - .post-image img
+      - article img
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+
+
+# ─── Tier 3: Lower Priority Sources ─────────────────────────────────────────
+
+deshaya-si:
+  name: Deshaya
+  url: https://www.deshaya.lk
+  rss_url: null
+  language: si
+
+  # Custom CMS — section-based listing
+  sections:
+    features:
+      listing_url: https://www.deshaya.lk/43/features
+      archive_pattern: null
+      max_pages: 1
+    harabara:
+      listing_url: https://www.deshaya.lk/51/harabara
+      archive_pattern: null
+      max_pages: 1
+
+  # Two URL formats: /cat/name/nid and /article/cat/name/nid/slug
+  article_url_patterns:
+    - '/article/\d+/[a-z-]+/\d+/'  # /article/43/features/18785/slug
+    - '/\d+/[a-z-]+/\d+'            # /51/harabara/2180
+
+  skip_url_patterns:
+    - '/\d+/[a-z-]+/?$'   # section listing pages
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - .ins-pos-tit h1
+      - h1
+    content:
+      - .ins-pos-tex
+      - article
+    date:
+      - .sec-1-ite-com
+    author:
+      - .author-name
+    image:
+      - .ins-pos-tex img
+      - .img-responsive
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.deshaya.lk/article/43/features/{nid}/x"
+      start: 1000
+      end: 20000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep
+
+
+newsnow-si:
+  name: NewsNow
+  url: https://www.newsnow.lk
+  rss_url: https://www.newsnow.lk/feed/
+  language: si
+
+  # WordPress tagDiv Newspaper theme (same as News19)
+  sections:
+    local:
+      listing_url: "https://www.newsnow.lk/archives/category/%e0%b6%b4%e0%b7%94%e0%b7%80%e0%b6%ad%e0%b7%8a/"
+      archive_pattern: "https://www.newsnow.lk/archives/category/%e0%b6%b4%e0%b7%94%e0%b7%80%e0%b6%ad%e0%b7%8a/page/{page}/"
+      max_pages: 40
+    foreign:
+      listing_url: "https://www.newsnow.lk/archives/category/%e0%b7%80%e0%b7%92%e0%b6%af%e0%b7%99%e0%b7%83%e0%b7%8a-%e0%b6%b4%e0%b7%94%e0%b7%80%e0%b6%ad%e0%b7%8a/"
+      archive_pattern: "https://www.newsnow.lk/archives/category/%e0%b7%80%e0%b7%92%e0%b6%af%e0%b7%99%e0%b7%83%e0%b7%8a-%e0%b6%b4%e0%b7%94%e0%b7%80%e0%b6%ad%e0%b7%8a/page/{page}/"
+      max_pages: 40
+    features:
+      listing_url: "https://www.newsnow.lk/archives/category/%e0%b7%80%e0%b7%92%e0%b7%81%e0%b7%9a%e0%b7%82%e0%b7%8f%e0%b6%82%e0%b6%9c/"
+      archive_pattern: "https://www.newsnow.lk/archives/category/%e0%b7%80%e0%b7%92%e0%b7%81%e0%b7%9a%e0%b7%82%e0%b7%8f%e0%b6%82%e0%b6%9c/page/{page}/"
+      max_pages: 40
+
+  article_url_patterns:
+    - '/archives/\d+'  # /archives/137432
+
+  skip_url_patterns:
+    - '/archives/(category|tag|author|page)/'
+    - '/archives/tdb_templates/'
+    - '/(wp-admin|wp-login|feed)/'
+    - '\.(jpg|png|pdf)$'
+
+  # tagDiv selectors (same theme as News19)
+  selectors:
+    title:
+      - h1.entry-title
+      - h1.tdb-title-text
+      - h1
+    content:
+      - .td-post-content
+      - .tdb_single_content .tdb-block-inner
+      - article
+    date:
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - .td-post-author-name a
+      - a.tdb-author-name
+    image:
+      - .td-post-featured-image img
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.newsnow.lk/?p={nid}"
+      start: 100000
+      end: 140000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
+
+lakresa-si:
+  name: Lakresa
+  url: https://lakresa.net
+  rss_url: https://lakresa.net/feed/
+  language: si
+
+  # WordPress block theme — date-based URLs
+  sections:
+    latest:
+      listing_url: https://lakresa.net/
+      archive_pattern: "https://lakresa.net/page/{page}/"
+      max_pages: 40
+
+  article_url_patterns:
+    - '/\d{4}/\d{2}/[a-z%]'  # /2025/09/slug (URL-encoded Sinhala)
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/home/?$'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  selectors:
+    title:
+      - h1.wp-block-post-title
+      - h1
+    content:
+      - .entry-content.post-content.wp-block-post-content
+      - .wp-block-post-content
+      - .entry-content
+      - article
+    date:
+      - .wp-block-post-date time[datetime]
+      - time[datetime]
+    author:
+      - .wp-block-post-author__name
+    image:
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://lakresa.net/?p={nid}"
+      start: 20000
+      end: 30000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
+
+news-lk-en:
+  name: News.lk
+  url: https://www.news.lk
+  rss_url: null  # Joomla CMS — no standard RSS
+  language: en
+
+  # Joomla with SP Page Builder — ?start=N offset pagination
+  sections:
+    current-affairs:
+      listing_url: https://www.news.lk/current-affairs
+      archive_pattern: "https://www.news.lk/current-affairs?start={page}"
+      page_start: 0
+      page_step: 13
+      max_pages: 40
+    news:
+      listing_url: https://www.news.lk/news
+      archive_pattern: "https://www.news.lk/news?start={page}"
+      page_start: 0
+      page_step: 13
+      max_pages: 40
+
+  article_url_patterns:
+    - '/current-affairs/[a-z]'
+    - '/news/[a-z]'
+    - '/parliament/[a-z]'
+    - '/press-release/[a-z]'
+    - '/cabinet-decisions/[a-z]'
+
+  skip_url_patterns:
+    - '/contact/?$'
+    - '/help-faq/?$'
+    - '/(categories|media-accreditation)/'
+    - '\?start=\d+'  # listing pages themselves
+    - '/(economy-development|district-news|art-cultural|sports-news)/?$'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - .page-header h1
+      - h1
+    content:
+      - .com-content-article__body
+      - .item-page
+      - article
+    date:
+      - "time[itemprop='dateCreated']"
+      - time[datetime]
+      - .create
+    author:
+      - .author-name
+    image:
+      - .article-full-image img
+      - article img
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+
+
+ada-si:
+  name: Ada.lk
+  url: https://www.ada.lk
+  rss_url: null
+  language: si
+
+  # Wijeya Newspapers custom CMS (same family as Lankadeepa)
+  sections:
+    breaking-news:
+      listing_url: https://www.ada.lk/breaking-news/110
+      archive_pattern: null
+      max_pages: 1
+    international:
+      listing_url: https://www.ada.lk/international/3
+      archive_pattern: null
+      max_pages: 1
+    entertainment:
+      listing_url: https://www.ada.lk/entertainment/8
+      archive_pattern: null
+      max_pages: 1
+
+  # URL pattern: /section/slug/cat_id-article_id
+  article_url_patterns:
+    - '/[a-z_-]+/.+/\d+-\d+'  # /breaking_news/slug/11-417009
+
+  skip_url_patterns:
+    - '/(video|health|cartoon|infographics|feedback)/'
+    - '/(breaking-news|international|entertainment|provincial_news)/\d+/?$'
+    - '/ada_7/'
+    - '\.(jpg|png|pdf)$'
+
+  selectors:
+    title:
+      - h1.single-head
+      - h1
+    content:
+      - .single-body-wrap
+      - article
+    date:
+      - .sr-date
+    author:
+      - .author-name
+    image:
+      - .single-body-wrap img
+      - article img
+
+  nid_sweep:
+    - url_pattern: "https://www.ada.lk/breaking_news/x/11-{nid}"
+      start: 300000
+      end: 420000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep

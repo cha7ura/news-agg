@@ -17,6 +17,14 @@ _MONTHS = (
 )
 _MONTHS_SHORT = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
 
+# Sinhala month names → English month number
+_SINHALA_MONTHS = {
+    "ජනවාරි": 1, "පෙබරවාරි": 2, "මාර්තු": 3, "අප්‍රේල්": 4,
+    "මැයි": 5, "ජූනි": 6, "ජූලි": 7, "අගෝස්තු": 8,
+    "සැප්තැම්බර්": 9, "ඔක්තෝබර්": 10, "නොවැම්බර්": 11, "දෙසැම්බර්": 12,
+}
+_SINHALA_MONTH_RE = "|".join(_SINHALA_MONTHS.keys())
+
 # Pattern 1: "Month DD, YYYY HH:MM am/pm" (Ada Derana English)
 _PAT_LONG = re.compile(
     rf"\b({_MONTHS})\s+(\d{{1,2}}),?\s+(\d{{4}})\s+(\d{{1,2}}:\d{{2}}\s*(?:am|pm)?)",
@@ -46,6 +54,14 @@ _PAT_DMY_LONG = re.compile(
 
 # Pattern 5: "DD/MM/YYYY" or "DD-MM-YYYY" (Sri Lankan DMY)
 _PAT_DMY = re.compile(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b")
+
+# Pattern 6: "YYYY SinhalaMonth DD" (Lankadeepa: "2026 පෙබරවාරි 13 | ...")
+_PAT_SINHALA_YMD = re.compile(
+    rf"\b(\d{{4}})\s+({_SINHALA_MONTH_RE})\s+(\d{{1,2}})\b"
+)
+
+# Pattern 7: "DD MM YYYY" with spaces (Ada.lk: "30 06 2025")
+_PAT_DMY_SPACES = re.compile(r"\b(\d{1,2})\s+(\d{2})\s+(\d{4})\b")
 
 # URL date pattern: /YYYY/MM/DD/
 _PAT_URL = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/")
@@ -163,6 +179,30 @@ def extract_date_from_text(text: str) -> datetime | None:
 
     # Pattern 5: "DD/MM/YYYY" or "DD-MM-YYYY"
     m = _PAT_DMY.search(text)
+    if m:
+        try:
+            day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            dt = datetime(year, month, day, tzinfo=_SRI_LANKA_TZ)
+            if _is_valid_date(dt):
+                return dt
+        except ValueError:
+            pass
+
+    # Pattern 6: "YYYY SinhalaMonth DD" (Lankadeepa, Divaina)
+    m = _PAT_SINHALA_YMD.search(text)
+    if m:
+        try:
+            year = int(m.group(1))
+            month = _SINHALA_MONTHS[m.group(2)]
+            day = int(m.group(3))
+            dt = datetime(year, month, day, tzinfo=_SRI_LANKA_TZ)
+            if _is_valid_date(dt):
+                return dt
+        except (ValueError, KeyError):
+            pass
+
+    # Pattern 7: "DD MM YYYY" with spaces (Ada.lk)
+    m = _PAT_DMY_SPACES.search(text)
     if m:
         try:
             day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
