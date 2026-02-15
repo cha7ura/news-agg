@@ -129,3 +129,47 @@ def get_date_sweep_config(slug: str) -> dict | None:
     if not config or "date_sweep" not in config:
         return None
     return config["date_sweep"]
+
+
+def get_scheduling_config(slug: str) -> dict:
+    """Get per-source scheduling config for the intelligent queue.
+
+    Returns dict with rate_limit_ms, max_concurrency, priority.
+    Values are None when not set (caller applies defaults).
+    """
+    config = get_source_config(slug)
+    scheduling = {}
+    if config and "scheduling" in config:
+        scheduling = config["scheduling"]
+    return {
+        "rate_limit_ms": scheduling.get("rate_limit_ms"),
+        "max_concurrency": scheduling.get("max_concurrency"),
+        "priority": scheduling.get("priority", 5),
+    }
+
+
+def get_backfill_methods(slug: str) -> list[dict]:
+    """Get ordered backfill methods for a source.
+
+    Reads from backfill.methods in config. If not declared, infers from
+    existing config sections (archive_pattern → archive, nid_sweep, date_sweep).
+
+    Returns list of dicts like [{"type": "archive", "pages": 40}, {"type": "nid_sweep"}].
+    """
+    config = get_source_config(slug)
+    if not config:
+        return []
+
+    # Explicit backfill config takes priority
+    if "backfill" in config and "methods" in config["backfill"]:
+        return config["backfill"]["methods"]
+
+    # Infer from existing config sections
+    methods = []
+    if get_archive_patterns(slug):
+        methods.append({"type": "archive"})
+    if get_nid_sweep_config(slug):
+        methods.append({"type": "nid_sweep"})
+    if get_date_sweep_config(slug):
+        methods.append({"type": "date_sweep"})
+    return methods

@@ -42,6 +42,10 @@ _EXTRACT_LINKS_JS = """
         if (/\\/(category|tag|page|author|wp-content|feed|login)\\//i.test(href)) continue;
         if (/\\.(jpg|jpeg|png|gif|svg|webp|pdf)$/i.test(href)) continue;
 
+        // Strip URL fragments (#comments, #respond, etc.) for dedup
+        href = href.split('#')[0];
+        if (seen.has(href)) continue;
+
         // For Ada Derana, only keep news/sports URLs
         if (params.slug.startsWith('ada-derana')) {
             if (!/\\/news[\\/.]/.test(href) && !/\\/sports[\\/.]/.test(href)) continue;
@@ -50,21 +54,27 @@ _EXTRACT_LINKS_JS = """
             // Remove trailing slash for consistent dedup
             if (href.endsWith('/')) href = href.slice(0, -1);
         } else {
-            // Check URL path length (at least 3 path segments after domain)
-            try {
-                const url = new URL(href);
-                const segments = url.pathname.split('/').filter(Boolean);
-                if (segments.length < 3) continue;
-            } catch { continue; }
-        }
+            // Apply article URL pattern filter if provided
+            // Match against pathname + search (supports query-string URLs like ?p=123)
+            let matchedByPattern = false;
+            if (params.articleUrlPatterns && params.articleUrlPatterns.length > 0) {
+                try {
+                    const url = new URL(href);
+                    const fullPath = url.pathname + url.search;
+                    matchedByPattern = params.articleUrlPatterns.some(p => new RegExp(p).test(fullPath));
+                    if (!matchedByPattern) continue;
+                } catch { continue; }
+            }
 
-        // Apply article URL pattern filter if provided
-        if (params.articleUrlPatterns && params.articleUrlPatterns.length > 0) {
-            try {
-                const url = new URL(href);
-                const matched = params.articleUrlPatterns.some(p => new RegExp(p).test(url.pathname));
-                if (!matched) continue;
-            } catch { continue; }
+            // Check URL path length (at least 3 path segments after domain)
+            // Skip this check if the URL already matched an article pattern
+            if (!matchedByPattern) {
+                try {
+                    const url = new URL(href);
+                    const segments = url.pathname.split('/').filter(Boolean);
+                    if (segments.length < 3) continue;
+                } catch { continue; }
+            }
         }
 
         // Skip generic link text

@@ -32,7 +32,7 @@ def cli() -> None:
 @click.option("--source", default=None, help="Source slug (e.g., ada-derana-en)")
 @click.option("--limit", default=20, help="Max articles per source")
 @click.option("--concurrency", default=1, help="Concurrent browser pages (default 1, use 3-5 for backfill)")
-@click.option("--backfill", is_flag=True, help="Crawl archive pages for older articles")
+@click.option("--backfill", is_flag=True, help="Auto-run configured backfill methods (archive, nid_sweep, date_sweep)")
 @click.option("--pages", default=5, help="Number of archive pages to crawl (backfill only)")
 @click.option("--nid-sweep", is_flag=True, help="Sweep through sequential article IDs for full coverage")
 @click.option("--date-sweep", is_flag=True, help="Sweep through calendar dates for date-based archive pages")
@@ -74,12 +74,13 @@ async def _ingest(
                 concurrency=concurrency,
             )
         elif backfill:
-            from news_agg.backfill import run_backfill
+            from news_agg.backfill import run_auto_backfill
 
-            result = await run_backfill(
+            result = await run_auto_backfill(
                 source_slug=source_slug,
-                pages=pages,
                 concurrency=concurrency,
+                pages=pages,
+                days=days,
             )
         else:
             from news_agg.pipeline import run_ingest

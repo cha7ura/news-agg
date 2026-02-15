@@ -36,7 +36,8 @@ from news_agg.pipeline import _should_skip_url
 from news_agg.scraper.article import scrape_article_page
 from news_agg.scraper.browser import close_playwright, connect_browser, create_context
 from news_agg.scraper.listing import _EXTRACT_LINKS_JS
-from news_agg.source_config import get_archive_patterns, get_article_url_patterns, get_date_sweep_config, get_nid_sweep_config
+from news_agg.scheduler import IntelligentScheduler
+from news_agg.source_config import get_archive_patterns, get_article_url_patterns, get_backfill_methods, get_date_sweep_config, get_nid_sweep_config, get_scheduling_config
 from news_agg.text.dedup import normalize_title
 from news_agg.text.normalize import normalize_text
 from news_agg.utils.logging import GREEN, RED, YELLOW, BOLD, DIM, RESET, get_logger
@@ -771,4 +772,235 @@ async def run_date_sweep(
         f"{GREEN}▸{RESET} Date sweep complete: {total_inserted} inserted, "
         f"{total_skipped} skipped"
     )
+    return {"inserted": total_inserted, "skipped": total_skipped}
+
+
+async def run_auto_backfill(
+    source_slug: str | None = None,
+    concurrency: int = 3,
+    pages: int | None = None,
+    days: int | None = None,
+) -> dict:
+    """Config-driven backfill — automatically runs the right methods for each source.
+
+    Single-source: runs methods sequentially (archive → nid_sweep → date_sweep).
+    Multi-source: archive phase uses intelligent scheduler for interleaved scraping,
+    then NID sweep and date sweep run per-source sequentially.
+    """
+    pool = await get_pool()
+
+    if source_slug:
+        source = await get_source_by_slug(pool, source_slug)
+        if not source:
+            log.error(f"Source not found: {source_slug}")
+            return {"error": f"Source not found: {source_slug}"}
+        sources = [source]
+    else:
+        sources = await get_active_sources(pool)
+
+    total_inserted = 0
+    total_skipped = 0
+    total_not_found = 0
+
+    # Single source → sequential methods (original flow)
+    if len(sources) == 1:
+        source = sources[0]
+        methods = get_backfill_methods(source.slug)
+        if not methods:
+            log.warning(f"  {YELLOW}–{RESET} No backfill methods for {source.slug}")
+            return {"inserted": 0, "skipped": 0, "not_found": 0}
+
+        method_names = [m["type"] for m in methods]
+        log.info(
+            f"{BOLD}AUTO BACKFILL{RESET} — {source.name}: "
+            f"{' → '.join(method_names)}"
+        )
+
+        for method in methods:
+            result = await _run_single_method(source, method, concurrency, pages, days)
+            total_inserted += result.get("inserted", 0)
+            total_skipped += result.get("skipped", 0)
+            total_not_found += result.get("not_found", 0)
+
+        log.info(
+            f"{GREEN}▸{RESET} Auto backfill complete: {total_inserted} inserted, "
+            f"{total_skipped} skipped, {total_not_found} not found"
+        )
+        return {"inserted": total_inserted, "skipped": total_skipped, "not_found": total_not_found}
+
+    # Multi-source → interleaved archive, then sequential NID/date sweeps
+    # Phase 1: Collect methods per source
+    archive_sources: list[tuple[Source, int]] = []  # (source, archive_pages)
+    nid_sweep_sources: list[Source] = []
+    date_sweep_sources: list[tuple[Source, int | None]] = []  # (source, days)
+
+    for source in sources:
+        methods = get_backfill_methods(source.slug)
+        if not methods:
+            continue
+        method_names = [m["type"] for m in methods]
+        log.info(
+            f"{BOLD}AUTO BACKFILL{RESET} — {source.name}: "
+            f"{' → '.join(method_names)}"
+        )
+        for method in methods:
+            mt = method["type"]
+            if mt == "archive":
+                ap = pages or method.get("pages", 5)
+                archive_sources.append((source, ap))
+            elif mt == "nid_sweep":
+                nid_sweep_sources.append(source)
+            elif mt == "date_sweep":
+                sd = days or method.get("days")
+                date_sweep_sources.append((source, sd))
+
+    # Phase 2: Interleaved archive backfill
+    if archive_sources:
+        log.info(f"{BOLD}ARCHIVE BACKFILL{RESET} — {len(archive_sources)} sources (interleaved)")
+        result = await _backfill_archive_interleaved(archive_sources, concurrency)
+        total_inserted += result.get("inserted", 0)
+        total_skipped += result.get("skipped", 0)
+
+    # Phase 3: NID sweeps (per-source, sequential)
+    for source in nid_sweep_sources:
+        log.info(f"  {DIM}Running NID sweep for {source.slug}...{RESET}")
+        result = await run_nid_sweep(source.slug, concurrency)
+        if "error" not in result:
+            total_inserted += result.get("inserted", 0)
+            total_not_found += result.get("not_found", 0)
+
+    # Phase 4: Date sweeps (per-source, sequential)
+    for source, sweep_days in date_sweep_sources:
+        log.info(f"  {DIM}Running date sweep for {source.slug}...{RESET}")
+        result = await run_date_sweep(source.slug, concurrency, sweep_days)
+        if "error" not in result:
+            total_inserted += result.get("inserted", 0)
+
+    log.info(
+        f"{GREEN}▸{RESET} Auto backfill complete: {total_inserted} inserted, "
+        f"{total_skipped} skipped, {total_not_found} not found"
+    )
+    return {"inserted": total_inserted, "skipped": total_skipped, "not_found": total_not_found}
+
+
+async def _run_single_method(
+    source: Source, method: dict, concurrency: int,
+    pages: int | None, days: int | None,
+) -> dict:
+    """Run a single backfill method for one source."""
+    method_type = method["type"]
+
+    if method_type == "archive":
+        archive_pages = pages or method.get("pages", 5)
+        log.info(f"  {DIM}Running archive crawl ({archive_pages} pages)...{RESET}")
+        result = await run_backfill(source.slug, archive_pages, concurrency)
+    elif method_type == "nid_sweep":
+        log.info(f"  {DIM}Running NID sweep...{RESET}")
+        result = await run_nid_sweep(source.slug, concurrency)
+    elif method_type == "date_sweep":
+        sweep_days = days or method.get("days")
+        log.info(f"  {DIM}Running date sweep...{RESET}")
+        result = await run_date_sweep(source.slug, concurrency, sweep_days)
+    else:
+        log.warning(f"  {YELLOW}–{RESET} Unknown backfill method: {method_type}")
+        return {}
+
+    if "error" in result:
+        log.error(f"  {RED}✗{RESET} {method_type} failed: {result['error']}")
+    return result
+
+
+async def _backfill_archive_interleaved(
+    archive_sources: list[tuple[Source, int]],
+    concurrency: int,
+) -> dict:
+    """Run archive backfill across multiple sources with intelligent scheduling.
+
+    Discovers archive URLs from all sources concurrently, then scrapes
+    interleaved across sources using the IntelligentScheduler.
+    """
+    pool = await get_pool()
+    browser = await connect_browser()
+    log.info(f"{GREEN}✓{RESET} Playwright connected")
+
+    scheduler = IntelligentScheduler(browser, pool, global_concurrency=concurrency)
+
+    for source, _ in archive_sources:
+        sched = get_scheduling_config(source.slug)
+        scheduler.register_source(
+            source=source,
+            rate_limit_ms=sched["rate_limit_ms"] or settings.rate_limit_ms,
+            max_concurrency=sched["max_concurrency"] or concurrency,
+            priority=sched["priority"],
+        )
+
+    existing_urls: dict[str, set[str]] = {}
+    existing_titles: dict[str, set[str]] = {}
+    counts: dict[str, dict[str, int]] = {}
+
+    async def _discover_archive(source: Source, archive_pages: int) -> None:
+        slug = source.slug
+        try:
+            discovered = await _crawl_archive_pages(browser, source, archive_pages)
+            if not discovered:
+                return
+
+            log.info(f"  {GREEN}✓{RESET} [{slug}] Discovered {len(discovered)} URLs")
+
+            urls = [item.link for item in discovered]
+            existing = await get_existing_urls(pool, source.id, urls)
+            dead = await get_dead_urls(pool, source.id, urls)
+            recent_raw = await get_recent_titles(pool, source.id, days=365)
+            titles = {normalize_title(t) for t in recent_raw if len(normalize_title(t)) > 10}
+
+            existing_urls[slug] = existing
+            existing_titles[slug] = titles
+            counts[slug] = {"inserted": 0, "skipped_no_date": 0, "skipped_duplicate": 0}
+
+            filtered = []
+            for item in discovered:
+                if item.link in existing or item.link in dead:
+                    continue
+                if _should_skip_url(item.link):
+                    continue
+                norm = normalize_title(item.title)
+                if norm and len(norm) > 10 and norm in titles:
+                    continue
+                filtered.append(item)
+
+            skipped = len(discovered) - len(filtered)
+            if filtered:
+                log.info(f"  [{slug}] {len(filtered)} new articles queued ({skipped} skipped)")
+                await scheduler.enqueue(slug, filtered)
+            else:
+                log.info(f"  {DIM}[{slug}] 0 new articles ({skipped} already in DB){RESET}")
+        except Exception as e:
+            log.error(f"  {RED}✗{RESET} [{slug}] archive discovery failed: {e}")
+        finally:
+            scheduler.mark_discovery_done(slug)
+
+    try:
+        # Discover all sources concurrently + start workers immediately
+        discovery_tasks = [
+            asyncio.create_task(_discover_archive(source, ap))
+            for source, ap in archive_sources
+        ]
+        worker_task = asyncio.create_task(
+            scheduler.run(existing_urls, existing_titles, counts)
+        )
+
+        await asyncio.gather(*discovery_tasks)
+        await worker_task
+        await scheduler.cleanup()
+    finally:
+        await browser.close()
+        await close_playwright()
+
+    total_inserted = sum(c["inserted"] for c in counts.values())
+    total_skipped = sum(c["skipped_duplicate"] + c["skipped_no_date"] for c in counts.values())
+
+    for slug, c in counts.items():
+        if c["inserted"] > 0:
+            log.info(f"  {GREEN}▸{RESET} {slug}: {c['inserted']} inserted")
+
     return {"inserted": total_inserted, "skipped": total_skipped}

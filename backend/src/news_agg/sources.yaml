@@ -88,6 +88,12 @@ ada-derana-en:
     - datePublished
     - publishedTime
 
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
 
 ada-derana-si:
   name: Ada Derana Sinhala
@@ -161,12 +167,24 @@ ada-derana-si:
     - og:article:published_time
     - datePublished
 
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
 
 daily-mirror-en:
   name: Daily Mirror
   url: https://www.dailymirror.lk
   rss_url: null  # Cloudflare-protected — no accessible RSS feed
   language: en
+
+  # Cloudflare-protected — lower concurrency and slower rate limit
+  scheduling:
+    rate_limit_ms: 1000
+    max_concurrency: 2
+    priority: 3
 
   # Daily Mirror uses offset-based pagination: /section/category_id/{offset}
   # offset = 0, 30, 60, 90... (30 articles per page)
@@ -260,6 +278,11 @@ daily-mirror-en:
     - og:article:published_time
     - datePublished
 
+  backfill:
+    methods:
+      - type: archive
+        pages: 100
+
 
 newsfirst-en:
   name: NewsFirst
@@ -331,6 +354,10 @@ newsfirst-en:
     - og:article:published_time
     - datePublished
 
+  backfill:
+    methods:
+      - type: date_sweep
+
 
 island-en:
   name: The Island
@@ -389,6 +416,12 @@ island-en:
     - og:article:published_time
     - datePublished
 
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
 
 economynext-en:
   name: EconomyNext
@@ -446,6 +479,12 @@ economynext-en:
     - article:published_time
     - og:article:published_time
     - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
 
 
 colombo-gazette-en:
@@ -512,6 +551,10 @@ colombo-gazette-en:
     - article:published_time
     - og:article:published_time
     - datePublished
+
+  backfill:
+    methods:
+      - type: date_sweep
 
 
 news19-si:
@@ -581,3 +624,213 @@ news19-si:
     - article:published_time
     - og:article:published_time
     - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
+
+sunday-observer-en:
+  name: Sunday Observer
+  url: https://www.sundayobserver.lk
+  rss_url: https://www.sundayobserver.lk/feed/
+  language: en
+
+  # WordPress — homepage and /page/N/ for archive
+  sections:
+    latest:
+      listing_url: https://www.sundayobserver.lk/
+      archive_pattern: "https://www.sundayobserver.lk/page/{page}/"
+      max_pages: 40
+
+  # Article URLs: /YYYY/MM/DD/section/id/slug/
+  article_url_patterns:
+    - '/\d{4}/\d{2}/\d{2}/[a-z-]+/\d+/'
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(about|contact|privacy|epaper|archives)/?$'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  # CSS selectors (WordPress Flavor theme)
+  selectors:
+    title:
+      - h1.post-title
+      - h1.entry-title
+      - h1
+    content:
+      - .inner-post-entry.entry-content
+      - .entry-content
+      - article
+    date:
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - .author-italic a.author-url
+      - .author-url
+    image:
+      - .single-post-thumb img
+      - article img
+
+  # NID sweep — WordPress ?p=ID redirects to canonical URL
+  nid_sweep:
+    - url_pattern: "https://www.sundayobserver.lk/?p={nid}"
+      start: 1000
+      end: 73000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
+
+lanka-news-web-en:
+  name: Lanka News Web
+  url: https://lankanewsweb.net
+  rss_url: https://lankanewsweb.net/feed/
+  language: en
+
+  # WordPress with tagDiv Newspaper theme (same as News19)
+  sections:
+    news:
+      listing_url: https://lankanewsweb.net/archives/category/news/
+      archive_pattern: "https://lankanewsweb.net/archives/category/news/page/{page}/"
+      max_pages: 40
+    political:
+      listing_url: https://lankanewsweb.net/archives/category/news/political-news/
+      archive_pattern: "https://lankanewsweb.net/archives/category/news/political-news/page/{page}/"
+      max_pages: 40
+    business:
+      listing_url: https://lankanewsweb.net/archives/category/business/
+      archive_pattern: "https://lankanewsweb.net/archives/category/business/page/{page}/"
+      max_pages: 40
+    foreign:
+      listing_url: https://lankanewsweb.net/archives/category/foreign/
+      archive_pattern: "https://lankanewsweb.net/archives/category/foreign/page/{page}/"
+      max_pages: 40
+    sports:
+      listing_url: https://lankanewsweb.net/archives/category/sport/
+      archive_pattern: "https://lankanewsweb.net/archives/category/sport/page/{page}/"
+      max_pages: 40
+
+  # Article URLs: /archives/id/slug/
+  article_url_patterns:
+    - '/archives/\d+/'
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '/(tds-checkout|tds-my-account|tds-login-register)/'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  # CSS selectors (tagDiv Newspaper theme — similar to News19)
+  selectors:
+    title:
+      - h1.tdb-title-text
+      - h1.entry-title
+      - h1
+    content:
+      - .td-post-content
+      - .tdb_single_content .tdb-block-inner
+      - article
+    date:
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - a.tdb-author-name
+      - .tdb-author-name
+    image:
+      - .td-post-featured-image img
+      - article img
+
+  # NID sweep — WordPress ?p=ID redirects to canonical URL
+  nid_sweep:
+    - url_pattern: "https://lankanewsweb.net/?p={nid}"
+      start: 1000
+      end: 175000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: archive
+        pages: 40
+      - type: nid_sweep
+
+
+lankatruth-si:
+  name: Lanka Truth
+  url: https://lankatruth.com/si
+  rss_url: null  # Feed returns 404
+  language: si
+
+  # WordPress with Elementor + Genesis theme
+  sections:
+    main:
+      listing_url: https://lankatruth.com/si/
+      archive_pattern: "https://lankatruth.com/si/page/{page}/"
+      max_pages: 40
+    politics:
+      listing_url: https://lankatruth.com/si/?cat=10
+      archive_pattern: null
+      max_pages: 1
+
+  # Article URLs: /?p=195491
+  article_url_patterns:
+    - '\?p=\d+'
+
+  skip_url_patterns:
+    - '/(category|tag|author|page|wp-)/'
+    - '\?cat=\d+'
+    - '\.(jpg|png|pdf)$'
+    - '/feed/?$'
+
+  # CSS selectors (Elementor + Genesis theme)
+  selectors:
+    title:
+      - h1.elementor-heading-title
+      - h1.entry-title
+      - h1
+    content:
+      - .elementor-widget-theme-post-content
+      - .entry-content
+      - article
+    date:
+      - time.entry-date[datetime]
+      - time[datetime]
+    author:
+      - .author-name
+      - .byline
+    image:
+      - .post-thumbnail img
+      - article img
+
+  # NID sweep — WordPress ?p=ID redirects to canonical URL
+  nid_sweep:
+    - url_pattern: "https://lankatruth.com/si/?p={nid}"
+      start: 1000
+      end: 196000
+      max_consecutive_404: 500
+
+  date_meta_tags:
+    - article:published_time
+    - og:article:published_time
+    - datePublished
+
+  backfill:
+    methods:
+      - type: nid_sweep

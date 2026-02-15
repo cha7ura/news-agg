@@ -28,10 +28,12 @@ from news_agg.db import (
     remove_dead_link,
 )
 from news_agg.models import ArticleCreate, RSSItem, ScrapeError, Source
+from news_agg.scheduler import IntelligentScheduler
 from news_agg.scraper.article import scrape_article_page
 from news_agg.scraper.browser import close_playwright, connect_browser, create_context
 from news_agg.scraper.listing import scrape_listing_page
 from news_agg.scraper.rss import fetch_rss
+from news_agg.source_config import get_scheduling_config
 from news_agg.text.dedup import normalize_title
 from news_agg.text.normalize import normalize_text
 from news_agg.utils.logging import GREEN, RED, YELLOW, BOLD, DIM, RESET, get_logger
@@ -90,11 +92,7 @@ async def run_ingest(
 
     log.info(f"Found {len(sources)} active source(s)")
 
-    total_inserted = 0
-    total_skipped_no_date = 0
-    total_skipped_duplicate = 0
-
-    # Connect browser once for the entire ingest run (pipeline.ts lines 956-963)
+    # Connect browser once for the entire ingest run
     browser = None
     try:
         browser = await connect_browser()
@@ -104,27 +102,114 @@ async def run_ingest(
         log.warning(f"{YELLOW}–{RESET} Continuing without article page scraping")
 
     try:
-        for source in sources:
-            result = await _ingest_source(pool, browser, source, limit, concurrency)
-            total_inserted += result["inserted"]
-            total_skipped_no_date += result["skipped_no_date"]
-            total_skipped_duplicate += result["skipped_duplicate"]
+        # Single source → use original sequential flow (backward compat)
+        if len(sources) == 1:
+            result = await _ingest_source(pool, browser, sources[0], limit, concurrency)
+            return result
+
+        # Multi-source → intelligent interleaved scheduling
+        result = await _ingest_interleaved(pool, browser, sources, limit, concurrency)
+        return result
     finally:
         if browser:
             await browser.close()
         await close_playwright()
 
-    summary = {
-        "inserted": total_inserted,
-        "skipped_no_date": total_skipped_no_date,
-        "skipped_duplicate": total_skipped_duplicate,
-    }
-    log.info(
-        f"{GREEN}▸{RESET} Ingest complete: {total_inserted} inserted, "
-        f"{total_skipped_no_date} skipped (no date), "
-        f"{total_skipped_duplicate} skipped (duplicate)"
+
+async def _ingest_interleaved(
+    pool,
+    browser,
+    sources: list[Source],
+    limit: int,
+    concurrency: int,
+) -> dict:
+    """Multi-source ingest with intelligent scheduling.
+
+    Discovers URLs from all sources concurrently, then scrapes interleaved
+    across sources — workers pull from whichever source's rate limit has
+    cooled down, eliminating idle time.
+    """
+    scheduler = IntelligentScheduler(browser, pool, global_concurrency=concurrency)
+
+    # Register all sources with their scheduling configs
+    for source in sources:
+        sched = get_scheduling_config(source.slug)
+        scheduler.register_source(
+            source=source,
+            rate_limit_ms=sched["rate_limit_ms"] or settings.rate_limit_ms,
+            max_concurrency=sched["max_concurrency"] or concurrency,
+            priority=sched["priority"],
+        )
+
+    # Per-source dedup state
+    existing_urls: dict[str, set[str]] = {}
+    existing_titles: dict[str, set[str]] = {}
+    counts: dict[str, dict[str, int]] = {}
+
+    async def _discover_and_enqueue(source: Source) -> None:
+        """Producer: discover URLs for one source, dedup, enqueue."""
+        slug = source.slug
+        try:
+            items = await _discover_articles(browser, source, limit)
+            if not items:
+                return
+
+            urls = [item.link for item in items[:limit]]
+            existing = await get_existing_urls(pool, source.id, urls)
+            dead = await get_dead_urls(pool, source.id, urls)
+            recent_raw = await get_recent_titles(pool, source.id)
+            titles = {normalize_title(t) for t in recent_raw if len(normalize_title(t)) > 10}
+
+            existing_urls[slug] = existing
+            existing_titles[slug] = titles
+            counts[slug] = {"inserted": 0, "skipped_no_date": 0, "skipped_duplicate": 0}
+
+            filtered = []
+            for item in items[:limit]:
+                if item.link in existing or item.link in dead:
+                    continue
+                norm = normalize_title(item.title)
+                if norm and len(norm) > 10 and norm in titles:
+                    continue
+                if _should_skip_url(item.link):
+                    continue
+                filtered.append(item)
+
+            if filtered:
+                log.info(f"  {DIM}[{slug}] {len(filtered)} new articles queued{RESET}")
+                await scheduler.enqueue(slug, filtered)
+            else:
+                log.info(f"  {DIM}[{slug}] all articles already in DB{RESET}")
+        except Exception as e:
+            log.error(f"  {RED}✗{RESET} [{slug}] discovery failed: {e}")
+        finally:
+            scheduler.mark_discovery_done(slug)
+
+    # Run discovery for all sources concurrently + start workers immediately
+    discovery_tasks = [asyncio.create_task(_discover_and_enqueue(s)) for s in sources]
+    worker_task = asyncio.create_task(
+        scheduler.run(existing_urls, existing_titles, counts)
     )
-    return summary
+
+    await asyncio.gather(*discovery_tasks)
+    await worker_task
+    await scheduler.cleanup()
+
+    # Aggregate results
+    total = {"inserted": 0, "skipped_no_date": 0, "skipped_duplicate": 0}
+    for slug, c in counts.items():
+        total["inserted"] += c["inserted"]
+        total["skipped_no_date"] += c["skipped_no_date"]
+        total["skipped_duplicate"] += c["skipped_duplicate"]
+        if c["inserted"] > 0:
+            log.info(f"  {GREEN}▸{RESET} {slug}: {c['inserted']} new articles")
+
+    log.info(
+        f"{GREEN}▸{RESET} Ingest complete: {total['inserted']} inserted, "
+        f"{total['skipped_no_date']} skipped (no date), "
+        f"{total['skipped_duplicate']} skipped (duplicate)"
+    )
+    return total
 
 
 async def _ingest_source(

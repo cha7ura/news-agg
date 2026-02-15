@@ -16,6 +16,11 @@ class RateLimiter:
         self._last_request = 0.0
         self._lock = asyncio.Lock()
 
+    def time_until_ready(self) -> float:
+        """Seconds until the rate limiter is ready. <= 0 means ready now."""
+        elapsed = time.monotonic() - self._last_request
+        return self._delay - elapsed
+
     async def wait(self) -> None:
         async with self._lock:
             elapsed = time.monotonic() - self._last_request

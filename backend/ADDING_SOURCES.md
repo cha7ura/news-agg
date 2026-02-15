@@ -102,6 +102,23 @@ example-news-en:
     - article:published_time
     - og:article:published_time
     - datePublished
+
+  # Backfill config — declares which methods work for this source
+  # Methods run in order: archive first (fast), then nid_sweep (thorough)
+  backfill:
+    methods:
+      - type: archive      # Crawl paginated archive pages
+        pages: 40           # Number of pages to crawl
+      - type: nid_sweep     # Iterate through sequential article IDs
+      # - type: date_sweep  # For date-based archive pages (e.g. /YYYY/MM/DD)
+      #   days: null        # null = full range from start_date
+
+  # Scheduling config — per-source tuning for the intelligent queue
+  # Optional: sources without this block get defaults (500ms, global concurrency, priority 5)
+  scheduling:
+    rate_limit_ms: 500       # Min delay between requests to this source (default: 500)
+    max_concurrency: 5       # Max concurrent scrapers for this source (default: --concurrency)
+    priority: 0              # Lower = higher priority (default: 5)
 ```
 
 ## 4. Find CSS Selectors
@@ -126,11 +143,12 @@ firecrawl scrape "https://example-news.com/news/12345/some-article" --html -o .f
 # Test regular ingest (RSS or listing page)
 uv run news-agg ingest --source example-news-en --limit 5
 
-# Test archive backfill
+# Test auto-backfill (runs configured methods in order: archive → nid_sweep)
 uv run news-agg ingest --source example-news-en --backfill --pages 2 --concurrency 3
 
-# Test NID sweep (if configured)
+# Override: run a specific method directly
 uv run news-agg ingest --source example-news-en --nid-sweep --concurrency 3
+uv run news-agg ingest --source example-news-en --date-sweep --concurrency 3
 
 # Check article counts
 uv run news-agg check
@@ -138,15 +156,35 @@ uv run news-agg check
 
 ## 6. Full Ingest
 
-Once testing looks good, run a full ingest:
+Once testing looks good, run a full backfill. The `--backfill` flag automatically runs
+all configured methods for the source (declared in `backfill.methods`):
 
 ```bash
-# Archive backfill (discover URLs from paginated archive pages)
-uv run news-agg ingest --source example-news-en --backfill --pages 40 --concurrency 5
+# Auto-backfill — runs archive crawl then NID sweep (or whatever's configured)
+uv run news-agg ingest --source example-news-en --backfill --concurrency 5
 
-# NID sweep (iterate through all article IDs — most thorough)
-uv run news-agg ingest --source example-news-en --nid-sweep --concurrency 5
+# Override archive page count (default comes from config)
+uv run news-agg ingest --source example-news-en --backfill --pages 100 --concurrency 5
 ```
+
+## Multi-Source Intelligent Scheduling
+
+When running without `--source` (all sources), the pipeline uses an intelligent queue
+that interleaves scraping across sources. Workers pull from whichever source's rate limit
+has cooled down — with 11 sources and 500ms per-source limits, workers effectively never wait.
+
+```bash
+# Multi-source ingest — interleaved, ~3-5x faster than sequential
+uv run news-agg ingest --limit 20 --concurrency 5
+
+# Multi-source backfill — archive phase interleaved, NID/date sweep sequential
+uv run news-agg ingest --backfill --pages 5 --concurrency 5
+```
+
+**Per-source tuning** via `scheduling:` in sources.yaml:
+- `rate_limit_ms`: Cloudflare sources need slower rates (e.g. 1000ms for Daily Mirror)
+- `max_concurrency`: CF sources need fewer concurrent requests (e.g. 2)
+- `priority`: Lower number = scraped first (0 = highest, default = 5)
 
 ## Troubleshooting
 
@@ -170,4 +208,5 @@ uv run news-agg ingest --source example-news-en --nid-sweep --concurrency 5
 | `scraper/rss.py` | RSS feed parser |
 | `pipeline.py` | Regular ingest orchestrator |
 | `backfill.py` | Archive backfill + NID sweep |
+| `scheduler.py` | Intelligent multi-source queue scheduler |
 | `docker/init.sql` | Database schema + seed sources |
