@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # SOCKS5 proxy for Playwright (e.g. "socks5://tor:9050" for Tor, or VPN proxy).
     # Uses Docker service name since browser runs in Docker. Empty string = no proxy.
     proxy_url: str = ""
+    # OpenRouter LLM config for article QA review agents
+    openrouter_api_key: str = ""
+    openrouter_model: str = "nvidia/nemotron-3-nano-30b-a3b:free"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

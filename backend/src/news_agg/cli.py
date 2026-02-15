@@ -9,6 +9,7 @@ Usage:
     news-agg check --supabase
     news-agg migrate
     news-agg backup
+    news-agg review --sample 10 --source ft-en
 """
 
 from __future__ import annotations
@@ -593,6 +594,25 @@ async def _sync() -> None:
     finally:
         await local_pool.close()
         await supa_pool.close()
+
+
+@cli.command()
+@click.option("--sample", default=10, help="Number of articles to review")
+@click.option("--source", default=None, help="Filter by source slug")
+@click.option("--since", default=None, help="Only articles published after this date (YYYY-MM-DD)")
+@click.option("--prompt-version", default="v1", help="Prompt version to use (v1, v2, ...)")
+@click.option("--categorize-only", is_flag=True, help="Skip QA, only categorize")
+def review(sample: int, source: str | None, since: str | None, prompt_version: str, categorize_only: bool) -> None:
+    """Review article quality using LLM agents (OpenRouter)."""
+    from news_agg.agents.runner import run_review
+
+    asyncio.run(run_review(
+        sample=sample,
+        source=source,
+        since=since,
+        prompt_version=prompt_version,
+        categorize_only=categorize_only,
+    ))
 
 
 if __name__ == "__main__":

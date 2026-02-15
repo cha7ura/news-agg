@@ -222,6 +222,46 @@ async def get_articles(
     return [dict(r) for r in rows]
 
 
+async def fetch_random_articles(
+    pool: asyncpg.Pool,
+    limit: int = 10,
+    source_slug: str | None = None,
+    since: str | None = None,
+) -> list[dict]:
+    """Fetch random articles for QA review. Returns dicts with source metadata."""
+    conditions: list[str] = []
+    params: list = []
+    idx = 1
+
+    if source_slug:
+        conditions.append(f"s.slug = ${idx}")
+        params.append(source_slug)
+        idx += 1
+
+    if since:
+        conditions.append(f"a.published_at >= ${idx}::timestamptz")
+        params.append(since)
+        idx += 1
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    params.append(limit)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT a.id, a.title, a.content, a.author, a.published_at,
+               a.image_url, a.language, a.url,
+               s.name as source_name, s.slug as source_slug
+        FROM articles a
+        JOIN sources s ON s.id = a.source_id
+        {where}
+        ORDER BY RANDOM()
+        LIMIT ${idx}
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_dead_link_stats(pool: asyncpg.Pool) -> list[dict]:
     """Dead link counts per source. For the `check` CLI command."""
     rows = await pool.fetch(
