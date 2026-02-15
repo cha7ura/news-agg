@@ -1,17 +1,19 @@
-"""Intelligent multi-source scheduler.
+"""Intelligent multi-source scheduler with autoscaling.
 
 Interleaves scraping across multiple sources so workers never idle on
 per-source rate limits. Each source has its own rate limiter and
 concurrency cap; workers pull from whichever source is ready next.
 
-With 11 sources and 500ms per-source rate limits, workers cycle through
-sources and effectively never wait.
+Autoscaling: monitors queue depth and error rate every 3 seconds.
+If the queue is growing and errors are low, spawns more workers
+(up to max_workers=25). If errors spike, reduces workers.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import asyncpg
 from playwright.async_api import Browser, BrowserContext
@@ -47,6 +49,7 @@ class SourceState:
         self.active_count = 0
         self.discovery_done = False
         self.items_scraped = 0
+        self.errors = 0
 
         # CF sources need a fresh BrowserContext per page; others share one
         self.needs_fresh_ctx: bool = not source.rss_url
@@ -64,6 +67,11 @@ class IntelligentScheduler:
         result = await scheduler.run(existing_urls, existing_titles)
     """
 
+    MAX_WORKERS = 25
+    AUTOSCALE_INTERVAL = 3.0  # seconds between autoscale checks
+    SCALE_UP_STEP = 2         # add this many workers per scale-up
+    ERROR_RATE_BACKOFF = 0.3  # error rate threshold to trigger scale-down
+
     def __init__(
         self,
         browser: Browser,
@@ -72,10 +80,16 @@ class IntelligentScheduler:
     ):
         self.browser = browser
         self.pool = pool
-        self.global_concurrency = global_concurrency
+        self.initial_concurrency = global_concurrency
         self.sources: dict[str, SourceState] = {}
         self.db_lock = asyncio.Lock()
         self._pick_lock = asyncio.Lock()
+        # Autoscaling state
+        self._worker_tasks: list[asyncio.Task] = []
+        self._stop_event = asyncio.Event()
+        self._last_queue_depth = 0
+        self._total_scraped = 0
+        self._total_errors = 0
 
     def register_source(
         self,
@@ -155,8 +169,14 @@ class IntelligentScheduler:
             await asyncio.sleep(0.05)
 
     # ------------------------------------------------------------------
-    # Worker pool
+    # Worker pool with autoscaling
     # ------------------------------------------------------------------
+
+    def _queue_depth(self) -> int:
+        return sum(s.queue.qsize() for s in self.sources.values())
+
+    def _active_workers(self) -> int:
+        return sum(1 for t in self._worker_tasks if not t.done())
 
     async def run(
         self,
@@ -164,10 +184,10 @@ class IntelligentScheduler:
         existing_titles: dict[str, set[str]],
         counts: dict[str, dict[str, int]],
     ) -> None:
-        """Launch worker pool that drains all source queues."""
+        """Launch worker pool with autoscaling that drains all source queues."""
 
         async def _worker() -> None:
-            while True:
+            while not self._stop_event.is_set():
                 result = await self._pick_next()
                 if result is None:
                     return
@@ -180,8 +200,73 @@ class IntelligentScheduler:
                     state.active_count -= 1
                     state.items_scraped += 1
 
-        workers = [asyncio.create_task(_worker()) for _ in range(self.global_concurrency)]
-        await asyncio.gather(*workers)
+        # Start initial workers
+        for _ in range(self.initial_concurrency):
+            self._worker_tasks.append(asyncio.create_task(_worker()))
+        log.info(f"  {DIM}Autoscale: started {self.initial_concurrency} workers (max {self.MAX_WORKERS}){RESET}")
+
+        # Start autoscaler alongside workers
+        autoscaler = asyncio.create_task(self._autoscaler(_worker))
+
+        # Wait for all workers to finish
+        while True:
+            alive = [t for t in self._worker_tasks if not t.done()]
+            if not alive:
+                break
+            await asyncio.gather(*alive, return_exceptions=True)
+
+        self._stop_event.set()
+        autoscaler.cancel()
+        try:
+            await autoscaler
+        except asyncio.CancelledError:
+            pass
+
+    async def _autoscaler(self, worker_fn) -> None:
+        """Monitor queue depth and error rate, scale workers up or down."""
+        await asyncio.sleep(self.AUTOSCALE_INTERVAL)  # initial grace period
+
+        while not self._stop_event.is_set():
+            queue_depth = self._queue_depth()
+            active = self._active_workers()
+            total_scraped = sum(s.items_scraped for s in self.sources.values())
+            total_errors = sum(s.errors for s in self.sources.values())
+
+            # Calculate error rate over recent window
+            recent_total = total_scraped - self._total_scraped
+            recent_errors = total_errors - self._total_errors
+            error_rate = recent_errors / max(recent_total, 1)
+
+            self._total_scraped = total_scraped
+            self._total_errors = total_errors
+
+            if error_rate >= self.ERROR_RATE_BACKOFF and active > 1:
+                # High errors — kill some workers by letting them exit naturally
+                # (they check _stop_event but we don't set it — we just don't add more)
+                target = max(1, active // 2)
+                removed = active - target
+                log.info(
+                    f"  {YELLOW}↓{RESET} Autoscale: errors {error_rate:.0%} — "
+                    f"reducing to {target} workers (-{removed})"
+                )
+                # Cancel the newest workers to scale down
+                for task in reversed(self._worker_tasks):
+                    if not task.done() and active > target:
+                        task.cancel()
+                        active -= 1
+
+            elif queue_depth > active * 2 and active < self.MAX_WORKERS:
+                # Queue growing, headroom available — scale up
+                add = min(self.SCALE_UP_STEP, self.MAX_WORKERS - active)
+                if add > 0:
+                    for _ in range(add):
+                        self._worker_tasks.append(asyncio.create_task(worker_fn()))
+                    log.info(
+                        f"  {GREEN}↑{RESET} Autoscale: queue={queue_depth} — "
+                        f"scaled to {active + add} workers (+{add})"
+                    )
+
+            await asyncio.sleep(self.AUTOSCALE_INTERVAL)
 
     async def _scrape_and_insert(
         self,
@@ -208,11 +293,13 @@ class IntelligentScheduler:
         )
 
         if isinstance(scraped, ScrapeError):
+            state.errors += 1
             log.warning(f"  {RED}✗{RESET} [{slug}] {item.title[:50]}... ({scraped.error_type})")
             await record_dead_link(self.pool, source.id, scraped.url, scraped.error_type)
             return
 
         if not scraped or not scraped.content or len(scraped.content) < 100:
+            state.errors += 1
             log.warning(f"  {RED}✗{RESET} [{slug}] {item.title[:50]}... (scrape failed or too short)")
             return
 
