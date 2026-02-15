@@ -81,5 +81,20 @@ services:
       - "8118:8118"    # HTTP proxy (Privoxy)
     restart: unless-stopped
 
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: news-agg-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/newsagg_neo4j
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  neo4j_data:

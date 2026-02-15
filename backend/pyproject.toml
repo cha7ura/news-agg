@@ -15,7 +15,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.28",
     "pyyaml>=6.0",
+    "langchain>=0.3",
     "langchain-openai>=0.3",
+    "langfuse>=3.0",
+    "graphiti-core>=0.7",
+    "sentence-transformers>=3.0",
 ]
 
 [project.optional-dependencies]

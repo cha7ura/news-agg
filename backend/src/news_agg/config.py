@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     # OpenRouter LLM config for article QA review agents
     openrouter_api_key: str = ""
     openrouter_model: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    # Langfuse Cloud observability
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_base_url: str = "https://us.cloud.langfuse.com"
+    # Neo4j for Graphiti knowledge graph
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

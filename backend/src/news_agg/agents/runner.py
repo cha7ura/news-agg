@@ -1,7 +1,10 @@
 """Orchestrator for article QA review pipeline.
 
 Samples articles from the database, runs them through QA review and
-categorization chains, and prints a formatted report.
+categorization chains, and prints a formatted report. Optionally saves
+passing articles to the Graphiti knowledge graph.
+
+All LLM calls are traced via Langfuse when configured.
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ import time
 
 from news_agg.agents.chains import build_categorize_chain, build_qa_chain
 from news_agg.agents.models import CategoryResult, QAReport
+from news_agg.agents.tracing import get_langfuse_handler
+from news_agg.agents.knowledge import add_article_to_graph, close_graphiti_client
 from news_agg.db import fetch_random_articles, get_pool, close_pool
 from news_agg.utils.logging import get_logger, GREEN, YELLOW, RED, BOLD, DIM, RESET
 
@@ -39,7 +44,13 @@ def _parse_response(response, model_class):
     return model_class.model_validate_json(text.strip())
 
 
-async def review_article(article: dict, qa_chain, cat_chain=None, categorize_only: bool = False):
+async def review_article(
+    article: dict,
+    qa_chain,
+    cat_chain=None,
+    categorize_only: bool = False,
+    invoke_config: dict | None = None,
+):
     """Run QA review and optional categorization on a single article."""
     content = article["content"] or ""
     input_data = {
@@ -51,12 +62,13 @@ async def review_article(article: dict, qa_chain, cat_chain=None, categorize_onl
         "content": content[:2000],
     }
 
+    config = invoke_config or {}
     qa_report = None
     cat_result = None
 
     if not categorize_only:
         try:
-            raw = await qa_chain.ainvoke(input_data)
+            raw = await qa_chain.ainvoke(input_data, config=config)
             qa_report = _parse_response(raw, QAReport)
         except Exception as e:
             log.error(f"  {RED}✗{RESET} QA review failed: {e}")
@@ -70,7 +82,7 @@ async def review_article(article: dict, qa_chain, cat_chain=None, categorize_onl
 
     if cat_chain:
         try:
-            raw = await cat_chain.ainvoke(input_data)
+            raw = await cat_chain.ainvoke(input_data, config=config)
             cat_result = _parse_response(raw, CategoryResult)
         except Exception as e:
             log.error(f"  {RED}✗{RESET} Categorization failed: {e}")
@@ -80,7 +92,7 @@ async def review_article(article: dict, qa_chain, cat_chain=None, categorize_onl
     return article, qa_report, cat_result
 
 
-def _print_report(results: list[tuple[dict, QAReport | None, CategoryResult | None]]):
+def _print_report(results: list[tuple[dict, QAReport | None, CategoryResult | None]], graph_count: int = 0):
     """Print a formatted review report to console."""
     passes = warns = fails = errors = 0
 
@@ -136,13 +148,16 @@ def _print_report(results: list[tuple[dict, QAReport | None, CategoryResult | No
     total = len(results)
     log.info("")
     log.info(f"{BOLD}Review Summary{RESET}")
-    log.info(
+    summary = (
         f"  {GREEN}{passes} pass{RESET}  "
         f"{YELLOW}{warns} warn{RESET}  "
         f"{RED}{fails} fail{RESET}  "
         f"{DIM}{errors} error{RESET}  "
         f"({total} total)"
     )
+    if graph_count:
+        summary += f"  {GREEN}+{graph_count} to graph{RESET}"
+    log.info(summary)
 
 
 async def run_review(
@@ -151,9 +166,14 @@ async def run_review(
     since: str | None = None,
     prompt_version: str = "v1",
     categorize_only: bool = False,
+    save_to_graph: bool = False,
 ) -> None:
-    """Main entry point: sample articles → review → report."""
+    """Main entry point: sample articles → review → report → optionally save to graph."""
     pool = await get_pool()
+
+    # Initialize Langfuse tracing (returns None if not configured)
+    langfuse_handler = get_langfuse_handler()
+    invoke_config = {"callbacks": [langfuse_handler]} if langfuse_handler else {}
 
     try:
         # Sample articles
@@ -167,6 +187,8 @@ async def run_review(
             log.info(f"  {DIM}source filter: {source}{RESET}")
         if since:
             log.info(f"  {DIM}since: {since}{RESET}")
+        if save_to_graph:
+            log.info(f"  {DIM}saving passing articles to knowledge graph{RESET}")
 
         # Build chains
         qa_chain = None if categorize_only else build_qa_chain(prompt_version)
@@ -174,20 +196,33 @@ async def run_review(
 
         # Process sequentially (respecting rate limits)
         results = []
+        graph_count = 0
         start = time.monotonic()
 
         for i, article in enumerate(articles):
             title = (article["title"] or "")[:50]
             log.info(f"  {DIM}[{i+1}/{len(articles)}] Reviewing: {title}...{RESET}")
 
-            result = await review_article(article, qa_chain, cat_chain, categorize_only)
+            result = await review_article(
+                article, qa_chain, cat_chain, categorize_only, invoke_config
+            )
             results.append(result)
+
+            # Save to knowledge graph if article passed QA and was categorized
+            article_data, qa_report, cat_result = result
+            if save_to_graph and cat_result:
+                should_save = categorize_only or (qa_report and qa_report.status == "pass")
+                if should_save:
+                    saved = await add_article_to_graph(article_data, cat_result)
+                    if saved:
+                        graph_count += 1
 
         elapsed = time.monotonic() - start
         log.info(f"  {DIM}Completed in {elapsed:.1f}s{RESET}")
         log.info("")
 
-        _print_report(results)
+        _print_report(results, graph_count)
 
     finally:
         await close_pool()
+        await close_graphiti_client()

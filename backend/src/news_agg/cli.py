@@ -602,7 +602,8 @@ async def _sync() -> None:
 @click.option("--since", default=None, help="Only articles published after this date (YYYY-MM-DD)")
 @click.option("--prompt-version", default="v1", help="Prompt version to use (v1, v2, ...)")
 @click.option("--categorize-only", is_flag=True, help="Skip QA, only categorize")
-def review(sample: int, source: str | None, since: str | None, prompt_version: str, categorize_only: bool) -> None:
+@click.option("--save", is_flag=True, help="Save passing articles to knowledge graph (Neo4j/Graphiti)")
+def review(sample: int, source: str | None, since: str | None, prompt_version: str, categorize_only: bool, save: bool) -> None:
     """Review article quality using LLM agents (OpenRouter)."""
     from news_agg.agents.runner import run_review
 
@@ -612,6 +613,7 @@ def review(sample: int, source: str | None, since: str | None, prompt_version: s
         since=since,
         prompt_version=prompt_version,
         categorize_only=categorize_only,
+        save_to_graph=save,
     ))
 
 
