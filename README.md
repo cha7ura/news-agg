@@ -140,6 +140,20 @@ uv run news-agg ingest --nid-sweep --source news19-si --concurrency 5 --supabase
 wait
 ```
 
+### Multi-source intelligent scheduling
+
+When running without `--source`, the pipeline interleaves scraping across all sources using per-source rate limiters. Workers pull from whichever source has cooled down, eliminating idle time:
+
+```bash
+# Multi-source ingest (interleaved, ~3-5x faster than sequential)
+uv run news-agg ingest --limit 20 --concurrency 5
+
+# Multi-source backfill (archive phase interleaved)
+uv run news-agg ingest --backfill --pages 5 --concurrency 5
+```
+
+Workers autoscale from `--concurrency N` up to 25 based on queue depth, and back off when error rates spike.
+
 ### Using Supabase
 
 Add `--supabase` to any command to target the Supabase database:
@@ -201,6 +215,7 @@ backend/
     db.py             # asyncpg database operations
     pipeline.py       # Main ingestion pipeline
     backfill.py       # Archive, NID sweep, date sweep
+    scheduler.py      # Multi-source queue with autoscaling
     models.py         # Pydantic models
     sources.yaml      # Per-source scraping config
     source_config.py  # YAML config loader

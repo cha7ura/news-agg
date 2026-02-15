@@ -186,6 +186,13 @@ uv run news-agg ingest --backfill --pages 5 --concurrency 5
 - `max_concurrency`: CF sources need fewer concurrent requests (e.g. 2)
 - `priority`: Lower number = scraped first (0 = highest, default = 5)
 
+**Autoscaling:** The worker pool automatically adjusts based on load:
+- Starts with `--concurrency N` workers
+- Scales up by 2 workers when queue depth exceeds 2× active workers (and errors are low)
+- Scales down by half when error rate exceeds 30% (protects against CF blocks)
+- Hard cap at 25 workers maximum
+- Check interval: every 3 seconds
+
 ## Troubleshooting
 
 | Problem | Fix |
