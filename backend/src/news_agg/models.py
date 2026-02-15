@@ -22,6 +22,12 @@ class RSSItem(BaseModel):
     image_url: str | None = None
 
 
+class ScrapeError(BaseModel):
+    """Returned by scrape_article_page() when scraping fails with a classifiable error."""
+    error_type: str  # "404", "timeout", "500", "cloudflare", "empty", "unknown"
+    url: str
+
+
 class ScrapedArticle(BaseModel):
     title: str
     content: str
@@ -30,6 +36,10 @@ class ScrapedArticle(BaseModel):
     image_url: str | None = None
     excerpt: str | None = None
     final_url: str | None = None  # Canonical URL after redirects (for nid sweep dedup)
+
+
+# Union return type for scrape_article_page()
+ScrapeResult = ScrapedArticle | ScrapeError | None
 
 
 class ArticleCreate(BaseModel):

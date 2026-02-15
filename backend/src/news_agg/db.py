@@ -75,6 +75,73 @@ async def get_recent_titles(pool: asyncpg.Pool, source_id: UUID, days: int = 7) 
     return {r["title"] for r in rows}
 
 
+async def get_dead_urls(pool: asyncpg.Pool, source_id: UUID, urls: list[str]) -> set[str]:
+    """Batch check: return URLs that should be skipped (not yet due for retry).
+
+    Retry schedule from first_failed_at:
+      retry_count 0 → wait 7 days, 1 → 14 days, 2 → 30 days, 3+ → permanent.
+    """
+    if not urls:
+        return set()
+    rows = await pool.fetch(
+        """
+        SELECT url FROM dead_links
+        WHERE source_id = $1 AND url = ANY($2::text[])
+        AND (
+            retry_count >= 3
+            OR (retry_count = 0 AND first_failed_at + interval '7 days' > NOW())
+            OR (retry_count = 1 AND first_failed_at + interval '14 days' > NOW())
+            OR (retry_count = 2 AND first_failed_at + interval '30 days' > NOW())
+        )
+        """,
+        source_id,
+        urls,
+    )
+    return {r["url"] for r in rows}
+
+
+async def get_all_dead_urls(pool: asyncpg.Pool, source_id: UUID) -> set[str]:
+    """Load ALL dead URLs for a source that should be skipped. Used by NID sweep."""
+    rows = await pool.fetch(
+        """
+        SELECT url FROM dead_links
+        WHERE source_id = $1
+        AND (
+            retry_count >= 3
+            OR (retry_count = 0 AND first_failed_at + interval '7 days' > NOW())
+            OR (retry_count = 1 AND first_failed_at + interval '14 days' > NOW())
+            OR (retry_count = 2 AND first_failed_at + interval '30 days' > NOW())
+        )
+        """,
+        source_id,
+    )
+    return {r["url"] for r in rows}
+
+
+async def record_dead_link(
+    pool: asyncpg.Pool, source_id: UUID, url: str, error_type: str,
+) -> None:
+    """Insert a new dead link or increment retry_count on re-failure."""
+    await pool.execute(
+        """
+        INSERT INTO dead_links (source_id, url, error_type)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (url) DO UPDATE SET
+            error_type = EXCLUDED.error_type,
+            last_checked_at = NOW(),
+            retry_count = dead_links.retry_count + 1
+        """,
+        source_id,
+        url,
+        error_type,
+    )
+
+
+async def remove_dead_link(pool: asyncpg.Pool, url: str) -> None:
+    """Delete a dead link when a retry succeeds."""
+    await pool.execute("DELETE FROM dead_links WHERE url = $1", url)
+
+
 async def insert_article(pool: asyncpg.Pool, article: ArticleCreate) -> UUID | None:
     """Insert article, returning id. Returns None if URL already exists.
 
@@ -152,4 +219,26 @@ async def get_articles(
             limit,
             offset,
         )
+    return [dict(r) for r in rows]
+
+
+async def get_dead_link_stats(pool: asyncpg.Pool) -> list[dict]:
+    """Dead link counts per source. For the `check` CLI command."""
+    rows = await pool.fetch(
+        """
+        SELECT s.name, s.slug, s.language,
+               COUNT(d.id) as total,
+               COUNT(d.id) FILTER (WHERE d.retry_count >= 3) as permanent,
+               COUNT(d.id) FILTER (WHERE d.retry_count < 3) as retryable,
+               COUNT(d.id) FILTER (WHERE d.error_type = '404') as err_404,
+               COUNT(d.id) FILTER (WHERE d.error_type = 'timeout') as err_timeout,
+               COUNT(d.id) FILTER (WHERE d.error_type = 'empty') as err_empty,
+               COUNT(d.id) FILTER (WHERE d.error_type NOT IN ('404', 'timeout', 'empty')) as err_other
+        FROM sources s
+        LEFT JOIN dead_links d ON d.source_id = s.id
+        GROUP BY s.id, s.name, s.slug, s.language
+        HAVING COUNT(d.id) > 0
+        ORDER BY COUNT(d.id) DESC
+        """
+    )
     return [dict(r) for r in rows]

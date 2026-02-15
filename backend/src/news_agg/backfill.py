@@ -20,14 +20,18 @@ from datetime import date, timedelta
 from news_agg.config import settings
 from news_agg.db import (
     get_active_sources,
+    get_all_dead_urls,
     get_all_source_urls,
+    get_dead_urls,
     get_existing_urls,
     get_pool,
     get_recent_titles,
     get_source_by_slug,
     insert_article,
+    record_dead_link,
+    remove_dead_link,
 )
-from news_agg.models import ArticleCreate, RSSItem, Source
+from news_agg.models import ArticleCreate, RSSItem, ScrapeError, Source
 from news_agg.pipeline import _should_skip_url
 from news_agg.scraper.article import scrape_article_page
 from news_agg.scraper.browser import close_playwright, connect_browser, create_context
@@ -244,6 +248,7 @@ async def run_backfill(
             # Step 2: Deduplicate against DB
             urls = [item.link for item in discovered]
             existing_urls = await get_existing_urls(pool, source.id, urls)
+            dead_urls = await get_dead_urls(pool, source.id, urls)
 
             recent_titles_raw = await get_recent_titles(pool, source.id, days=365)
             existing_titles = {
@@ -253,6 +258,8 @@ async def run_backfill(
             items_to_scrape = []
             for item in discovered:
                 if item.link in existing_urls:
+                    continue
+                if item.link in dead_urls:
                     continue
                 if _should_skip_url(item.link):
                     continue
@@ -290,10 +297,17 @@ async def run_backfill(
                     await rate_limiter.wait()
 
                     scraped = await scrape_article_page(scraper_target, item.link, item.pub_date, source.slug)
+                    if isinstance(scraped, ScrapeError):
+                        failed += 1
+                        log.debug(f"  {RED}✗{RESET} {item.title[:40]}... ({scraped.error_type})")
+                        await record_dead_link(pool, source.id, scraped.url, scraped.error_type)
+                        return
                     if not scraped or not scraped.content or len(scraped.content) < 100:
                         failed += 1
                         log.debug(f"  {RED}✗{RESET} {item.title[:40]}... (scrape failed)")
                         return
+                    # Successful scrape — remove from dead_links if it was a retry
+                    await remove_dead_link(pool, item.link)
 
                     article_title = scraped.title or normalize_text(item.title)
 
@@ -390,9 +404,13 @@ async def run_nid_sweep(
                 log.warning(f"  {YELLOW}–{RESET} No nid_sweep configured for {source.slug}")
                 continue
 
-            # Pre-load all existing URLs for this source
+            # Pre-load all existing URLs and dead URLs for this source
             existing_urls = await get_all_source_urls(pool, source.id)
-            log.info(f"  {DIM}{source.name}: {len(existing_urls)} articles already in DB{RESET}")
+            dead_urls = await get_all_dead_urls(pool, source.id)
+            log.info(
+                f"  {DIM}{source.name}: {len(existing_urls)} articles in DB, "
+                f"{len(dead_urls)} dead links{RESET}"
+            )
 
             for sweep in sweep_configs:
                 url_pattern = sweep["url_pattern"]
@@ -421,14 +439,16 @@ async def run_nid_sweep(
                     batch_end = min(batch_start + batch_size, end + 1)
                     nids = list(range(batch_start, batch_end))
 
-                    # Quick pre-filter: skip nids whose constructed URL is already in DB
+                    # Quick pre-filter: skip nids whose URL is already in DB or dead
                     nids_to_check = []
                     for nid in nids:
                         candidate_url = url_pattern.format(nid=nid)
-                        if candidate_url not in existing_urls:
-                            nids_to_check.append(nid)
-                        else:
+                        if candidate_url in existing_urls:
                             skipped += 1
+                        elif candidate_url in dead_urls:
+                            skipped += 1
+                        else:
+                            nids_to_check.append(nid)
 
                     if not nids_to_check:
                         continue
@@ -446,6 +466,12 @@ async def run_nid_sweep(
                                 context, url, source_slug=source.slug
                             )
 
+                            if isinstance(scraped, ScrapeError):
+                                not_found += 1
+                                consecutive_404 += 1
+                                await record_dead_link(pool, source.id, scraped.url, scraped.error_type)
+                                dead_urls.add(scraped.url)
+                                return
                             if not scraped or not scraped.content or len(scraped.content) < 100:
                                 not_found += 1
                                 consecutive_404 += 1
@@ -453,6 +479,8 @@ async def run_nid_sweep(
 
                             # Reset consecutive 404 counter — we found a valid article
                             consecutive_404 = 0
+                            # Remove from dead_links if this was a retry
+                            await remove_dead_link(pool, url)
 
                             # Use canonical URL after redirect for dedup and storage
                             canonical_url = scraped.final_url or url
@@ -599,15 +627,19 @@ async def run_date_sweep(
                 f"{start_date} → {today} ({total_days} days)"
             )
 
-            # Pre-load existing URLs for dedup
+            # Pre-load existing URLs and dead URLs for dedup
             existing_urls = await get_all_source_urls(pool, source.id)
-            log.info(f"  {DIM}{source.name}: {len(existing_urls)} articles already in DB{RESET}")
+            dead_urls_set = await get_all_dead_urls(pool, source.id)
+            log.info(
+                f"  {DIM}{source.name}: {len(existing_urls)} articles in DB, "
+                f"{len(dead_urls_set)} dead links{RESET}"
+            )
 
             article_patterns = get_article_url_patterns(source.slug)
 
             # Phase 1: Discover article URLs from daily archive pages
             all_items: list[RSSItem] = []
-            seen_urls: set[str] = set(existing_urls)
+            seen_urls: set[str] = set(existing_urls) | dead_urls_set
 
             context = await create_context(browser)
             try:
@@ -680,9 +712,15 @@ async def run_date_sweep(
                     await rate_limiter.wait()
 
                     scraped = await scrape_article_page(browser, item.link, source_slug=source.slug)
+                    if isinstance(scraped, ScrapeError):
+                        failed += 1
+                        await record_dead_link(pool, source.id, scraped.url, scraped.error_type)
+                        return
                     if not scraped or not scraped.content or len(scraped.content) < 100:
                         failed += 1
                         return
+                    # Successful scrape — remove from dead_links if it was a retry
+                    await remove_dead_link(pool, item.link)
 
                     article_title = scraped.title or normalize_text(item.title)
 

@@ -18,13 +18,16 @@ from news_agg.config import settings
 from news_agg.db import (
     get_active_sources,
     get_article_stats,
+    get_dead_urls,
     get_existing_urls,
     get_pool,
     get_recent_titles,
     get_source_by_slug,
     insert_article,
+    record_dead_link,
+    remove_dead_link,
 )
-from news_agg.models import ArticleCreate, RSSItem, Source
+from news_agg.models import ArticleCreate, RSSItem, ScrapeError, Source
 from news_agg.scraper.article import scrape_article_page
 from news_agg.scraper.browser import close_playwright, connect_browser, create_context
 from news_agg.scraper.listing import scrape_listing_page
@@ -145,6 +148,7 @@ async def _ingest_source(
     # Step 2: Deduplicate against DB (pipeline.ts lines 1032-1054)
     urls = [item.link for item in rss_items[:limit]]
     existing_urls = await get_existing_urls(pool, source.id, urls)
+    dead_urls = await get_dead_urls(pool, source.id, urls)
 
     # Get recent titles for title-based dedup
     recent_titles_raw = await get_recent_titles(pool, source.id)
@@ -156,6 +160,8 @@ async def _ingest_source(
     items_to_scrape: list[RSSItem] = []
     for item in rss_items[:limit]:
         if item.link in existing_urls:
+            continue
+        if item.link in dead_urls:
             continue
         norm_title = normalize_title(item.title)
         if norm_title and len(norm_title) > 10 and norm_title in existing_titles:
@@ -196,11 +202,19 @@ async def _ingest_source(
             await rate_limiter.wait()
 
             scraped = await scrape_article_page(scraper_target, item.link, item.pub_date, source.slug)
+            if isinstance(scraped, ScrapeError):
+                log.warning(
+                    f"  {RED}✗{RESET} {item.title[:50]}... ({scraped.error_type})"
+                )
+                await record_dead_link(pool, source.id, scraped.url, scraped.error_type)
+                return
             if not scraped or not scraped.content or len(scraped.content) < 100:
                 log.warning(
                     f"  {RED}✗{RESET} {item.title[:50]}... (scrape failed or too short)"
                 )
                 return
+            # Successful scrape — remove from dead_links if it was a retry
+            await remove_dead_link(pool, item.link)
 
             article_title = scraped.title or normalize_text(item.title)
 

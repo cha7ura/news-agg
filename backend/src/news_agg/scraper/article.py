@@ -12,7 +12,7 @@ from datetime import datetime
 
 from playwright.async_api import Browser, BrowserContext
 
-from news_agg.models import ScrapedArticle
+from news_agg.models import ScrapedArticle, ScrapeError, ScrapeResult
 from news_agg.scraper.browser import create_context
 from news_agg.text.dates import extract_date_waterfall
 from news_agg.text.normalize import normalize_text
@@ -239,8 +239,11 @@ async def scrape_article_page(
     url: str,
     rss_pub_date: str | None = None,
     source_slug: str | None = None,
-) -> ScrapedArticle | None:
-    """Scrape a single article page. Returns None if content too short or scrape fails.
+) -> ScrapeResult:
+    """Scrape a single article page.
+
+    Returns ScrapedArticle on success, ScrapeError on classifiable failure,
+    or None for unclassifiable failures.
 
     Accepts either a Browser (creates a fresh context per page — needed for
     Cloudflare-protected sites) or a BrowserContext (reuses existing context).
@@ -267,8 +270,18 @@ async def scrape_article_page(
         else:
             page = await browser_or_ctx.new_page()
 
-        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(2000)
+
+        # Check HTTP status codes
+        if response:
+            status = response.status
+            if status == 404:
+                log.debug(f"  HTTP 404 for {url}")
+                return ScrapeError(error_type="404", url=url)
+            if status >= 500:
+                log.warning(f"  HTTP {status} for {url}")
+                return ScrapeError(error_type=str(status), url=url)
 
         # Detect Cloudflare challenge ("Just a moment...") and wait for it to resolve
         title = await page.title()
@@ -281,7 +294,7 @@ async def scrape_article_page(
                     break
             else:
                 log.warning(f"  Cloudflare challenge did not resolve for {url}")
-                return None
+                return ScrapeError(error_type="cloudflare", url=url)
 
         # Extract everything in one page.evaluate() call
         # Capture the final URL after any redirects (e.g. news.php?nid=123 → /news/123/slug)
@@ -298,7 +311,7 @@ async def scrape_article_page(
 
         # Content minimum check (pipeline.ts line 429)
         if not result["content"] or len(result["content"]) < 100:
-            return None
+            return ScrapeError(error_type="empty", url=url)
 
         # Date extraction waterfall (pipeline.ts lines 432-467)
         published_at: datetime | None = extract_date_waterfall(
@@ -344,9 +357,12 @@ async def scrape_article_page(
             excerpt=excerpt,
             final_url=final_url,
         )
+    except TimeoutError:
+        log.warning(f"Scrape timed out for {url}")
+        return ScrapeError(error_type="timeout", url=url)
     except Exception as e:
         log.warning(f"Scrape failed for {url}: {e}")
-        return None
+        return ScrapeError(error_type="unknown", url=url)
     finally:
         if page:
             try:

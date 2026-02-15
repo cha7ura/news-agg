@@ -150,16 +150,19 @@ uv run news-agg ingest --nid-sweep --source ada-derana-en --concurrency 5 --supa
 uv run news-agg check --supabase
 ```
 
-### Migrate local data to Supabase
+### Sync local ↔ Supabase (bidirectional)
 
 ```bash
-uv run news-agg migrate
+uv run news-agg sync
 ```
 
-### Backup Supabase to local
+Pushes local diff to Supabase, then pulls Supabase diff to local. Handles source ID remapping automatically. Syncs articles and dead links.
+
+### Migrate / Backup (one-way)
 
 ```bash
-uv run news-agg backup
+uv run news-agg migrate   # local → Supabase (destructive: replaces sources)
+uv run news-agg backup    # Supabase → local (non-destructive)
 ```
 
 ### Check database stats
@@ -168,6 +171,18 @@ uv run news-agg backup
 uv run news-agg check              # local DB
 uv run news-agg check --supabase   # Supabase
 ```
+
+Shows article counts per source and dead link breakdown (404, timeout, empty, permanent vs retryable).
+
+### Dead link tracking
+
+Failed scrape URLs are automatically tracked in the `dead_links` table with error type classification (404, timeout, 500, cloudflare, empty content). The scraper skips known-dead URLs on subsequent runs.
+
+**Graduated retry schedule** (from first failure):
+- **7 days** → first retry
+- **14 days** → second retry
+- **30 days** → final retry
+- After 3 failed retries → permanently dead (never retried)
 
 ## Running tests
 

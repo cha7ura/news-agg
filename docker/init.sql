@@ -52,3 +52,18 @@ INSERT INTO sources (name, slug, url, rss_url, language) VALUES
     ('Colombo Gazette', 'colombo-gazette-en', 'https://colombogazette.com', NULL, 'en'),
     ('News19', 'news19-si', 'https://www.news19.lk', 'https://www.news19.lk/feed/', 'si')
 ON CONFLICT (slug) DO NOTHING;
+
+-- Dead links: track failed scrape URLs with graduated retry
+CREATE TABLE IF NOT EXISTS dead_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source_id UUID NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    url TEXT UNIQUE NOT NULL,
+    error_type TEXT NOT NULL,     -- '404', 'timeout', '500', 'cloudflare', 'empty', 'unknown'
+    first_failed_at TIMESTAMPTZ DEFAULT NOW(),
+    last_checked_at TIMESTAMPTZ DEFAULT NOW(),
+    retry_count INTEGER DEFAULT 0, -- 0→7d, 1→14d, 2→30d, 3→permanent
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_links_source ON dead_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_dead_links_url ON dead_links(url);
