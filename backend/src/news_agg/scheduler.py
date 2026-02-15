@@ -54,6 +54,7 @@ class SourceState:
         # CF sources need a fresh BrowserContext per page; others share one
         self.needs_fresh_ctx: bool = not source.rss_url
         self.shared_context: BrowserContext | None = None
+        self._ctx_lock = asyncio.Lock()
 
 
 class IntelligentScheduler:
@@ -121,6 +122,8 @@ class IntelligentScheduler:
         then wait for shortest cooldown. Returns None when all work is done.
         """
         while True:
+            sleep_time: float | None = None
+
             async with self._pick_lock:
                 all_done = True
                 candidates: list[tuple[SourceState, float]] = []
@@ -139,8 +142,8 @@ class IntelligentScheduler:
 
                 if not candidates:
                     # All sources either empty (waiting for discovery) or at
-                    # their per-source concurrency cap — wait briefly and retry
-                    pass  # fall through to sleep below
+                    # their per-source concurrency cap — sleep outside lock
+                    sleep_time = 0.05
                 else:
                     ready = [(s, w) for s, w in candidates if w <= 0]
                     if ready:
@@ -148,25 +151,23 @@ class IntelligentScheduler:
                         ready.sort(key=lambda x: (x[0].priority, x[0].items_scraped))
                         state = ready[0][0]
                     else:
-                        # Nothing ready — wait for shortest cooldown
+                        # Nothing ready — capture shortest cooldown, sleep outside lock
                         candidates.sort(key=lambda x: x[1])
-                        state, wait_time = candidates[0]
-                        # Release lock while sleeping
-                        await asyncio.sleep(wait_time)
-                        # Re-check after sleep (another worker may have claimed it)
-                        continue
+                        sleep_time = candidates[0][1]
 
-                    # Claim rate limit slot and dequeue
-                    await state.rate_limiter.wait()
-                    try:
-                        item = state.queue.get_nowait()
-                        state.active_count += 1
-                        return (state, item)
-                    except asyncio.QueueEmpty:
-                        continue
+                    if sleep_time is None:
+                        # Claim rate limit slot and dequeue
+                        await state.rate_limiter.wait()
+                        try:
+                            item = state.queue.get_nowait()
+                            state.active_count += 1
+                            return (state, item)
+                        except asyncio.QueueEmpty:
+                            continue
 
-            # Brief yield before retrying (no candidates available)
-            await asyncio.sleep(0.05)
+            # Sleep outside the lock so other workers aren't blocked
+            if sleep_time is not None:
+                await asyncio.sleep(sleep_time)
 
     # ------------------------------------------------------------------
     # Worker pool with autoscaling
@@ -266,6 +267,9 @@ class IntelligentScheduler:
                         f"scaled to {active + add} workers (+{add})"
                     )
 
+            # Prune completed tasks to avoid unbounded list growth
+            self._worker_tasks = [t for t in self._worker_tasks if not t.done()]
+
             await asyncio.sleep(self.AUTOSCALE_INTERVAL)
 
     async def _scrape_and_insert(
@@ -284,8 +288,9 @@ class IntelligentScheduler:
         if state.needs_fresh_ctx:
             scraper_target: Browser | BrowserContext = self.browser
         else:
-            if state.shared_context is None:
-                state.shared_context = await create_context(self.browser)
+            async with state._ctx_lock:
+                if state.shared_context is None:
+                    state.shared_context = await create_context(self.browser)
             scraper_target = state.shared_context
 
         scraped = await scrape_article_page(

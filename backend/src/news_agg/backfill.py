@@ -923,63 +923,63 @@ async def _backfill_archive_interleaved(
     browser = await connect_browser()
     log.info(f"{GREEN}✓{RESET} Playwright connected")
 
-    scheduler = IntelligentScheduler(browser, pool, global_concurrency=concurrency)
-
-    for source, _ in archive_sources:
-        sched = get_scheduling_config(source.slug)
-        scheduler.register_source(
-            source=source,
-            rate_limit_ms=sched["rate_limit_ms"] or settings.rate_limit_ms,
-            max_concurrency=sched["max_concurrency"] or concurrency,
-            priority=sched["priority"],
-        )
-
-    existing_urls: dict[str, set[str]] = {}
-    existing_titles: dict[str, set[str]] = {}
-    counts: dict[str, dict[str, int]] = {}
-
-    async def _discover_archive(source: Source, archive_pages: int) -> None:
-        slug = source.slug
-        try:
-            discovered = await _crawl_archive_pages(browser, source, archive_pages)
-            if not discovered:
-                return
-
-            log.info(f"  {GREEN}✓{RESET} [{slug}] Discovered {len(discovered)} URLs")
-
-            urls = [item.link for item in discovered]
-            existing = await get_existing_urls(pool, source.id, urls)
-            dead = await get_dead_urls(pool, source.id, urls)
-            recent_raw = await get_recent_titles(pool, source.id, days=365)
-            titles = {normalize_title(t) for t in recent_raw if len(normalize_title(t)) > 10}
-
-            existing_urls[slug] = existing
-            existing_titles[slug] = titles
-            counts[slug] = {"inserted": 0, "skipped_no_date": 0, "skipped_duplicate": 0}
-
-            filtered = []
-            for item in discovered:
-                if item.link in existing or item.link in dead:
-                    continue
-                if _should_skip_url(item.link):
-                    continue
-                norm = normalize_title(item.title)
-                if norm and len(norm) > 10 and norm in titles:
-                    continue
-                filtered.append(item)
-
-            skipped = len(discovered) - len(filtered)
-            if filtered:
-                log.info(f"  [{slug}] {len(filtered)} new articles queued ({skipped} skipped)")
-                await scheduler.enqueue(slug, filtered)
-            else:
-                log.info(f"  {DIM}[{slug}] 0 new articles ({skipped} already in DB){RESET}")
-        except Exception as e:
-            log.error(f"  {RED}✗{RESET} [{slug}] archive discovery failed: {e}")
-        finally:
-            scheduler.mark_discovery_done(slug)
-
     try:
+        scheduler = IntelligentScheduler(browser, pool, global_concurrency=concurrency)
+
+        for source, _ in archive_sources:
+            sched = get_scheduling_config(source.slug)
+            scheduler.register_source(
+                source=source,
+                rate_limit_ms=sched["rate_limit_ms"] or settings.rate_limit_ms,
+                max_concurrency=sched["max_concurrency"] or concurrency,
+                priority=sched["priority"],
+            )
+
+        existing_urls: dict[str, set[str]] = {}
+        existing_titles: dict[str, set[str]] = {}
+        counts: dict[str, dict[str, int]] = {}
+
+        async def _discover_archive(source: Source, archive_pages: int) -> None:
+            slug = source.slug
+            try:
+                discovered = await _crawl_archive_pages(browser, source, archive_pages)
+                if not discovered:
+                    return
+
+                log.info(f"  {GREEN}✓{RESET} [{slug}] Discovered {len(discovered)} URLs")
+
+                urls = [item.link for item in discovered]
+                existing = await get_existing_urls(pool, source.id, urls)
+                dead = await get_dead_urls(pool, source.id, urls)
+                recent_raw = await get_recent_titles(pool, source.id, days=365)
+                titles = {normalize_title(t) for t in recent_raw if len(normalize_title(t)) > 10}
+
+                existing_urls[slug] = existing
+                existing_titles[slug] = titles
+                counts[slug] = {"inserted": 0, "skipped_no_date": 0, "skipped_duplicate": 0}
+
+                filtered = []
+                for item in discovered:
+                    if item.link in existing or item.link in dead:
+                        continue
+                    if _should_skip_url(item.link):
+                        continue
+                    norm = normalize_title(item.title)
+                    if norm and len(norm) > 10 and norm in titles:
+                        continue
+                    filtered.append(item)
+
+                skipped = len(discovered) - len(filtered)
+                if filtered:
+                    log.info(f"  [{slug}] {len(filtered)} new articles queued ({skipped} skipped)")
+                    await scheduler.enqueue(slug, filtered)
+                else:
+                    log.info(f"  {DIM}[{slug}] 0 new articles ({skipped} already in DB){RESET}")
+            except Exception as e:
+                log.error(f"  {RED}✗{RESET} [{slug}] archive discovery failed: {e}")
+            finally:
+                scheduler.mark_discovery_done(slug)
+
         # Discover all sources concurrently + start workers immediately
         discovery_tasks = [
             asyncio.create_task(_discover_archive(source, ap))
