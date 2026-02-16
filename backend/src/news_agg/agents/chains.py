@@ -16,10 +16,10 @@ _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 
 def _get_llm() -> ChatOpenAI:
-    """Create OpenRouter-backed LLM instance."""
+    """Create LLM instance (OpenRouter, Ollama, or LM Studio)."""
     return ChatOpenAI(
-        model=settings.openrouter_model,
-        api_key=settings.openrouter_api_key,
+        model=settings.active_model,
+        api_key=settings.active_api_key,
         base_url=settings.llm_base_url,
         temperature=0,
         max_tokens=8192,

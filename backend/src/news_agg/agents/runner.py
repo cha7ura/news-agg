@@ -240,7 +240,7 @@ async def run_review(
                         entities=cat_result.entities if cat_result else None,
                         location=cat_result.location if cat_result else None,
                         summary=cat_result.summary if cat_result else None,
-                        reviewed_by=settings.openrouter_model,
+                        reviewed_by=settings.active_model,
                     )
                 except Exception as e:
                     log.error(f"  {RED}✗{RESET} Failed to persist QA result: {e}")

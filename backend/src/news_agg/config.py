@@ -14,11 +14,13 @@ class Settings(BaseSettings):
     # SOCKS5 proxy for Playwright (e.g. "socks5://tor:9050" for Tor, or VPN proxy).
     # Uses Docker service name since browser runs in Docker. Empty string = no proxy.
     proxy_url: str = ""
-    # OpenRouter LLM config for article QA review agents
+    # LLM config — works with any OpenAI-compatible API (OpenRouter, Ollama, LM Studio)
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+    llm_model: str = ""      # if empty, falls back to openrouter_model
+    llm_api_key: str = ""    # if empty, falls back to openrouter_api_key
+    # OpenRouter defaults (backward-compatible with existing .env files)
     openrouter_api_key: str = ""
     openrouter_model: str = "nvidia/nemotron-3-nano-30b-a3b:free"
-    # LLM base URL — change to switch provider (Ollama, LM Studio, etc.)
-    llm_base_url: str = "https://openrouter.ai/api/v1"
     # Langfuse Cloud observability
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
@@ -40,6 +42,16 @@ class Settings(BaseSettings):
     neo4j_docker_image: str = "neo4j:5.26-community"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
+
+    @property
+    def active_model(self) -> str:
+        """Resolved model name (prefers llm_model, falls back to openrouter_model)."""
+        return self.llm_model or self.openrouter_model
+
+    @property
+    def active_api_key(self) -> str:
+        """Resolved API key (prefers llm_api_key, falls back to openrouter_api_key)."""
+        return self.llm_api_key or self.openrouter_api_key
 
 
 settings = Settings()

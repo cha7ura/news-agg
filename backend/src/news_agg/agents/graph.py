@@ -32,10 +32,10 @@ def _load_system_prompt() -> str:
 
 
 def _build_llm() -> ChatOpenAI:
-    """Build the LLM client using OpenRouter."""
+    """Build the LLM client."""
     return ChatOpenAI(
-        model=settings.openrouter_model,
-        api_key=settings.openrouter_api_key,
+        model=settings.active_model,
+        api_key=settings.active_api_key,
         base_url=settings.llm_base_url,
         temperature=0.1,
     )

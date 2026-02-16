@@ -90,9 +90,13 @@ PLAYWRIGHT_WS_URL=ws://localhost:3100
 LOG_LEVEL=info
 RATE_LIMIT_MS=2000
 
-# LLM for review/agent (OpenRouter)
+# LLM for review/agent (OpenRouter by default, or Ollama/LM Studio)
 OPENROUTER_API_KEY=sk-or-v1-...
 OPENROUTER_MODEL=openrouter/aurora-alpha
+# To use a different provider, set these instead:
+# LLM_BASE_URL=http://localhost:11434/v1
+# LLM_MODEL=glm4
+# LLM_API_KEY=ollama
 
 # Observability (optional)
 LANGFUSE_SECRET_KEY=sk-lf-...
@@ -258,6 +262,35 @@ When running without `--source`, the pipeline uses an intelligent queue that int
 
 ```bash
 uv run news-agg ingest --limit 20 --concurrency 5
+```
+
+## Switching LLM providers
+
+The pipeline uses any OpenAI-compatible API. By default it points to OpenRouter, but you can switch to Ollama, LM Studio, or any compatible endpoint by changing `.env`:
+
+```env
+# OpenRouter (default — no changes needed)
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=openrouter/aurora-alpha
+
+# Ollama (local)
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=glm4
+LLM_API_KEY=ollama
+
+# LM Studio (remote PC)
+LLM_BASE_URL=http://192.168.x.x:1234/v1
+LLM_MODEL=glm-4.7
+LLM_API_KEY=not-needed
+```
+
+If `LLM_MODEL` / `LLM_API_KEY` are not set, they fall back to `OPENROUTER_MODEL` / `OPENROUTER_API_KEY`. The `reviewed_by` column in the articles table records which model reviewed each article.
+
+To run Ollama in Docker alongside the other services:
+
+```bash
+docker run -d --name newsagg-ollama -p 11434:11434 -v ollama_data:/root/.ollama ollama/ollama
+docker exec newsagg-ollama ollama pull glm4
 ```
 
 ## VPN mode

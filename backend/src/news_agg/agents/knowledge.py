@@ -69,11 +69,11 @@ async def get_graphiti_client():
         from graphiti_core.llm_client.config import LLMConfig
         from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
 
-        # LLM client: OpenRouter via OpenAI-compatible API
+        # LLM client: OpenAI-compatible API (OpenRouter, Ollama, LM Studio)
         llm_config = LLMConfig(
-            api_key=settings.openrouter_api_key,
-            model=settings.openrouter_model,
-            small_model=settings.openrouter_model,
+            api_key=settings.active_api_key,
+            model=settings.active_model,
+            small_model=settings.active_model,
             base_url=settings.llm_base_url,
         )
         llm_client = OpenAIGenericClient(config=llm_config)
