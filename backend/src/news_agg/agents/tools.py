@@ -16,7 +16,6 @@ from news_agg.db import (
     get_graph_ready_articles,
     get_pool,
     get_recent_runs,
-    get_unreviewed_count,
     mark_article_graph_saved,
     update_agent_run,
 )
@@ -33,16 +32,15 @@ async def get_pipeline_status() -> str:
     """
     pool = await get_pool()
     stats = await get_article_stats(pool)
-    unreviewed = await get_unreviewed_count(pool)
+    total_unreviewed = sum(row["unreviewed"] for row in stats)
 
-    lines = ["Pipeline Status:", f"  Total unreviewed: {unreviewed}", ""]
+    lines = ["Pipeline Status:", f"  Total unreviewed: {total_unreviewed}", ""]
     for row in stats:
-        source_unreviewed = await get_unreviewed_count(pool, row["slug"])
         latest = row["latest_article"]
         latest_str = latest.strftime("%Y-%m-%d %H:%M") if latest else "never"
         lines.append(
             f"  {row['name']} ({row['slug']}): "
-            f"{row['count']} articles, {source_unreviewed} unreviewed, "
+            f"{row['count']} articles, {row['unreviewed']} unreviewed, "
             f"last={latest_str}, lang={row['language']}"
         )
 

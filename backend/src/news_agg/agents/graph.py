@@ -12,7 +12,6 @@ import uuid
 from pathlib import Path
 
 import yaml
-from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
@@ -42,35 +41,10 @@ def _build_llm() -> ChatOpenAI:
     )
 
 
-async def _build_checkpointer():
-    """Build an async Postgres checkpointer, or fall back to in-memory."""
-    try:
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+def _build_in_memory_checkpointer():
+    from langgraph.checkpoint.memory import InMemorySaver
 
-        checkpointer = AsyncPostgresSaver.from_conn_string(settings.database_url)
-        await checkpointer.setup()
-        log.info(f"  {GREEN}✓{RESET} Postgres checkpointer ready")
-        return checkpointer
-    except Exception as e:
-        log.warning(f"  {DIM}Postgres checkpointer failed ({e}), using in-memory{RESET}")
-        from langgraph.checkpoint.memory import InMemorySaver
-
-        return InMemorySaver()
-
-
-async def build_agent():
-    """Build and return the compiled LangGraph agent."""
-    llm = _build_llm()
-    system_prompt = _load_system_prompt()
-    checkpointer = await _build_checkpointer()
-
-    agent = create_react_agent(
-        model=llm,
-        tools=ALL_TOOLS,
-        checkpointer=checkpointer,
-        prompt=system_prompt,
-    )
-    return agent, checkpointer
+    return InMemorySaver()
 
 
 async def run_agent_cycle(
@@ -100,25 +74,50 @@ async def run_agent_cycle(
     log.info(f"{BOLD}AGENT{RESET} — starting {run_type} (run={run_id})")
     log.info(f"  {DIM}thread={thread_id}{RESET}")
 
-    agent, checkpointer = await build_agent()
-    config = {"configurable": {"thread_id": thread_id}}
-
     # Build the initial user message instructing the agent
     parts = [f"Run ID: {run_id}", f"Run type: {run_type}"]
     if sources:
         parts.append(f"Focus sources: {', '.join(sources)}")
     parts.append(f"Article limit per source: {limit}")
     parts.append("Begin the pipeline cycle now.")
-
     user_message = "\n".join(parts)
 
+    return await _run_with_checkpointer(pool, run_id, thread_id, user_message)
+
+
+async def _run_with_checkpointer(pool, run_id, thread_id: str, user_message: str) -> dict:
+    """Run agent with proper checkpointer lifecycle."""
+    llm = _build_llm()
+    system_prompt = _load_system_prompt()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        async with AsyncPostgresSaver.from_conn_string(settings.database_url) as checkpointer:
+            await checkpointer.setup()
+            log.info(f"  {GREEN}✓{RESET} Postgres checkpointer ready")
+            agent = create_react_agent(
+                model=llm, tools=ALL_TOOLS, checkpointer=checkpointer, prompt=system_prompt,
+            )
+            return await _invoke_agent(agent, config, pool, run_id, thread_id, user_message)
+    except Exception as e:
+        log.warning(f"  {DIM}Postgres checkpointer failed ({e}), using in-memory{RESET}")
+        checkpointer = _build_in_memory_checkpointer()
+        agent = create_react_agent(
+            model=llm, tools=ALL_TOOLS, checkpointer=checkpointer, prompt=system_prompt,
+        )
+        return await _invoke_agent(agent, config, pool, run_id, thread_id, user_message)
+
+
+async def _invoke_agent(agent, config, pool, run_id, thread_id: str, user_message: str) -> dict:
+    """Invoke the agent and handle success/failure."""
     try:
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": user_message}]},
             config=config,
         )
 
-        # Extract final message
         final_msg = result["messages"][-1].content if result.get("messages") else "No response"
         log.info(f"\n{BOLD}Agent completed:{RESET}")
         log.info(f"  {DIM}{final_msg[:500]}{RESET}")
@@ -141,10 +140,3 @@ async def run_agent_cycle(
             "status": "failed",
             "error": str(e),
         }
-    finally:
-        # Clean up checkpointer if it has a close method
-        if hasattr(checkpointer, "__aexit__"):
-            try:
-                await checkpointer.__aexit__(None, None, None)
-            except Exception:
-                pass

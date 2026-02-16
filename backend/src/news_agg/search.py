@@ -49,103 +49,99 @@ async def sync_articles(
     Upserts by article UUID — safe to run multiple times.
     Returns {indexed, total}.
     """
-    import asyncpg
+    from news_agg.db import get_pool
 
     client = get_client()
     _configure_index(client)
     index = client.index(INDEX_NAME)
 
-    pool = await asyncpg.create_pool(settings.database_url, min_size=2, max_size=5)
+    pool = await get_pool()
 
-    try:
-        # Count total articles to sync
+    # Count total articles to sync
+    if source_slug:
+        total = await pool.fetchval(
+            """
+            SELECT COUNT(*) FROM articles a
+            JOIN sources s ON s.id = a.source_id
+            WHERE s.slug = $1
+            """,
+            source_slug,
+        )
+    else:
+        total = await pool.fetchval("SELECT COUNT(*) FROM articles")
+
+    log.info(f"{BOLD}Syncing {total} articles → Meilisearch{RESET}")
+
+    offset = 0
+    indexed = 0
+
+    while offset < total:
         if source_slug:
-            total = await pool.fetchval(
+            rows = await pool.fetch(
                 """
-                SELECT COUNT(*) FROM articles a
+                SELECT a.id, a.title, a.content, a.excerpt, a.author,
+                       a.published_at, a.language, a.url, a.image_url,
+                       a.qa_status, a.qa_score, a.category, a.summary,
+                       a.created_at,
+                       s.name as source_name, s.slug as source_slug
+                FROM articles a
                 JOIN sources s ON s.id = a.source_id
                 WHERE s.slug = $1
+                ORDER BY a.created_at
+                LIMIT $2 OFFSET $3
                 """,
                 source_slug,
+                batch_size,
+                offset,
             )
         else:
-            total = await pool.fetchval("SELECT COUNT(*) FROM articles")
+            rows = await pool.fetch(
+                """
+                SELECT a.id, a.title, a.content, a.excerpt, a.author,
+                       a.published_at, a.language, a.url, a.image_url,
+                       a.qa_status, a.qa_score, a.category, a.summary,
+                       a.created_at,
+                       s.name as source_name, s.slug as source_slug
+                FROM articles a
+                JOIN sources s ON s.id = a.source_id
+                ORDER BY a.created_at
+                LIMIT $1 OFFSET $2
+                """,
+                batch_size,
+                offset,
+            )
 
-        log.info(f"{BOLD}Syncing {total} articles → Meilisearch{RESET}")
+        docs = []
+        for r in rows:
+            content = r["content"] or ""
+            docs.append({
+                "id": str(r["id"]),
+                "title": r["title"],
+                "content": content[:5000],  # Truncate for search index
+                "excerpt": r["excerpt"] or content[:300],
+                "author": r["author"],
+                "published_at": r["published_at"].isoformat() if r["published_at"] else None,
+                "language": r["language"],
+                "url": r["url"],
+                "image_url": r["image_url"],
+                "qa_status": r["qa_status"],
+                "qa_score": r["qa_score"],
+                "category": r["category"],
+                "summary": r["summary"],
+                "source_name": r["source_name"],
+                "source_slug": r["source_slug"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            })
 
-        offset = 0
-        indexed = 0
+        if docs:
+            index.add_documents(docs)
+            indexed += len(docs)
 
-        while offset < total:
-            if source_slug:
-                rows = await pool.fetch(
-                    """
-                    SELECT a.id, a.title, a.content, a.excerpt, a.author,
-                           a.published_at, a.language, a.url, a.image_url,
-                           a.qa_status, a.qa_score, a.category, a.summary,
-                           a.created_at,
-                           s.name as source_name, s.slug as source_slug
-                    FROM articles a
-                    JOIN sources s ON s.id = a.source_id
-                    WHERE s.slug = $1
-                    ORDER BY a.created_at
-                    LIMIT $2 OFFSET $3
-                    """,
-                    source_slug,
-                    batch_size,
-                    offset,
-                )
-            else:
-                rows = await pool.fetch(
-                    """
-                    SELECT a.id, a.title, a.content, a.excerpt, a.author,
-                           a.published_at, a.language, a.url, a.image_url,
-                           a.qa_status, a.qa_score, a.category, a.summary,
-                           a.created_at,
-                           s.name as source_name, s.slug as source_slug
-                    FROM articles a
-                    JOIN sources s ON s.id = a.source_id
-                    ORDER BY a.created_at
-                    LIMIT $1 OFFSET $2
-                    """,
-                    batch_size,
-                    offset,
-                )
+        offset += batch_size
+        log.info(f"  {GREEN}▸{RESET} {min(offset, total)}/{total}")
 
-            docs = []
-            for r in rows:
-                content = r["content"] or ""
-                docs.append({
-                    "id": str(r["id"]),
-                    "title": r["title"],
-                    "content": content[:5000],  # Truncate for search index
-                    "excerpt": r["excerpt"] or content[:300],
-                    "author": r["author"],
-                    "published_at": r["published_at"].isoformat() if r["published_at"] else None,
-                    "language": r["language"],
-                    "url": r["url"],
-                    "image_url": r["image_url"],
-                    "qa_status": r["qa_status"],
-                    "qa_score": r["qa_score"],
-                    "category": r["category"],
-                    "summary": r["summary"],
-                    "source_name": r["source_name"],
-                    "source_slug": r["source_slug"],
-                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-                })
-
-            if docs:
-                index.add_documents(docs)
-                indexed += len(docs)
-
-            offset += batch_size
-            log.info(f"  {GREEN}▸{RESET} {min(offset, total)}/{total}")
-
-        log.info(f"  {GREEN}✓{RESET} Indexed {indexed} articles")
-        return {"indexed": indexed, "total": total}
-
-    finally:
-        await pool.close()
+    log.info(f"  {GREEN}✓{RESET} Indexed {indexed} articles")
+    return {"indexed": indexed, "total": total}
 
 
 def search_articles(

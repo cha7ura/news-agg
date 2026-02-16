@@ -172,11 +172,12 @@ async def insert_article(pool: asyncpg.Pool, article: ArticleCreate) -> UUID | N
 
 
 async def get_article_stats(pool: asyncpg.Pool) -> list[dict]:
-    """Get article counts per source. For the `check` CLI command."""
+    """Get article counts per source, including unreviewed count."""
     rows = await pool.fetch(
         """
         SELECT s.name, s.slug, s.language, COUNT(a.id) as count,
-               MAX(a.published_at) as latest_article
+               MAX(a.published_at) as latest_article,
+               COUNT(a.id) FILTER (WHERE a.qa_status IS NULL) as unreviewed
         FROM sources s
         LEFT JOIN articles a ON a.source_id = s.id
         GROUP BY s.id, s.name, s.slug, s.language
