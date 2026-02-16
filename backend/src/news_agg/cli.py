@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import signal
 
 import click
 
@@ -167,7 +168,7 @@ async def _run_dual_pipeline(
         log.info(f"  {DIM}Source filter: {source}{RESET}")
     log.info(f"  {DIM}Press Ctrl+C to stop{RESET}\n")
 
-    tasks = []
+    tasks: list[asyncio.Task] = []
 
     if run_ingest_pipeline:
         tasks.append(asyncio.create_task(
@@ -181,12 +182,15 @@ async def _run_dual_pipeline(
             name="process-loop",
         ))
 
+    # Register SIGINT/SIGTERM to cancel tasks gracefully
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda: [t.cancel() for t in tasks])
+
     try:
         await asyncio.gather(*tasks)
-    except (asyncio.CancelledError, KeyboardInterrupt):
+    except asyncio.CancelledError:
         log.info(f"\n{BOLD}Shutting down pipelines...{RESET}")
-        for t in tasks:
-            t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
         await close_pool()

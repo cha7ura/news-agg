@@ -266,14 +266,19 @@ function render(data) {
 }
 
 async function refresh() {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const res = await fetch(API);
+    const res = await fetch(API, { signal: ctrl.signal });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     render(await res.json());
   } catch (e) {
+    const msg = e.name === 'AbortError' ? 'Request timed out' : e.message;
     const errEl = document.getElementById('error');
-    errEl.textContent = 'Failed to load: ' + e.message;
+    errEl.textContent = 'Failed to load: ' + msg;
     errEl.style.display = 'block';
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

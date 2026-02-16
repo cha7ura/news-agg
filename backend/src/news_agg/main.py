@@ -11,6 +11,8 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -129,14 +131,15 @@ async def dashboard_stats():
     """Full pipeline overview for the dashboard."""
     pool = await get_pool()
 
-    sources = await get_dashboard_stats(pool)
-    dead_links = await get_dead_link_stats(pool)
-    activity = await get_ingestion_activity(pool, days=7)
-    models = await get_review_model_stats(pool)
-    runs = await get_recent_runs(pool, limit=10)
+    sources, dead_links, activity, models, runs = await asyncio.gather(
+        get_dashboard_stats(pool),
+        get_dead_link_stats(pool),
+        get_ingestion_activity(pool, days=7),
+        get_review_model_stats(pool),
+        get_recent_runs(pool, limit=10),
+    )
 
     # Meilisearch stats (graceful if unavailable)
-    import logging
     try:
         from news_agg.search import get_index_stats
         meili = get_index_stats()
