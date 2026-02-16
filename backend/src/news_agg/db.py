@@ -460,6 +460,59 @@ async def get_recent_runs(
     return [dict(r) for r in rows]
 
 
+async def get_dashboard_stats(pool: asyncpg.Pool) -> list[dict]:
+    """Per-source stats for the dashboard: articles, QA breakdown, dead links."""
+    rows = await pool.fetch(
+        """
+        SELECT s.name, s.slug, s.language, s.is_active,
+               COUNT(a.id) as total_articles,
+               COUNT(a.id) FILTER (WHERE a.qa_status IS NOT NULL) as reviewed,
+               COUNT(a.id) FILTER (WHERE a.qa_status = 'pass') as qa_pass,
+               COUNT(a.id) FILTER (WHERE a.qa_status = 'warn') as qa_warn,
+               COUNT(a.id) FILTER (WHERE a.qa_status = 'fail') as qa_fail,
+               COUNT(a.id) FILTER (WHERE a.category IS NOT NULL) as categorized,
+               COUNT(a.id) FILTER (WHERE a.graph_saved = true) as graph_saved,
+               MAX(a.published_at) as latest_article,
+               MAX(a.scraped_at) as latest_scrape,
+               (SELECT COUNT(*) FROM dead_links d WHERE d.source_id = s.id) as dead_links
+        FROM sources s
+        LEFT JOIN articles a ON a.source_id = s.id
+        GROUP BY s.id, s.name, s.slug, s.language, s.is_active
+        ORDER BY COUNT(a.id) DESC
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_ingestion_activity(pool: asyncpg.Pool, days: int = 7) -> list[dict]:
+    """Articles ingested per day for the last N days."""
+    rows = await pool.fetch(
+        """
+        SELECT DATE(scraped_at) as date, COUNT(*) as count
+        FROM articles
+        WHERE scraped_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY DATE(scraped_at)
+        ORDER BY date
+        """,
+        str(days),
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_review_model_stats(pool: asyncpg.Pool) -> list[dict]:
+    """Count of articles reviewed by each model."""
+    rows = await pool.fetch(
+        """
+        SELECT reviewed_by, COUNT(*) as count
+        FROM articles
+        WHERE reviewed_by IS NOT NULL
+        GROUP BY reviewed_by
+        ORDER BY count DESC
+        """
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_dead_link_stats(pool: asyncpg.Pool) -> list[dict]:
     """Dead link counts per source. For the `check` CLI command."""
     rows = await pool.fetch(

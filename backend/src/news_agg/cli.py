@@ -10,6 +10,7 @@ Usage:
     news-agg migrate
     news-agg backup
     news-agg review --sample 10 --source ft-en
+    news-agg run --ingest-interval 300 --review-batch 20 --concurrency 3
 """
 
 from __future__ import annotations
@@ -95,6 +96,182 @@ async def _ingest(
             click.echo(f"Error: {result['error']}")
     finally:
         await close_pool()
+
+
+@cli.command("run")
+@click.option("--source", default=None, help="Source slug (filter for both pipelines)")
+@click.option("--limit", default=20, help="Max articles per source per ingest cycle")
+@click.option("--concurrency", default=3, help="Concurrent browser pages for ingestion")
+@click.option("--ingest-interval", default=300, help="Seconds between ingestion cycles (default 5m)")
+@click.option("--review-batch", default=20, help="Articles per review batch")
+@click.option("--review-interval", default=300, help="Seconds between review cycles (default 5m)")
+@click.option("--no-review", is_flag=True, help="Skip the review pipeline (ingest only)")
+@click.option("--no-ingest", is_flag=True, help="Skip the ingest pipeline (review/sync only)")
+@click.option("--no-search-sync", is_flag=True, help="Skip Meilisearch sync after review")
+@click.option("--supabase", is_flag=True, help="Use Supabase DB instead of local")
+def run_pipelines(
+    source: str | None,
+    limit: int,
+    concurrency: int,
+    ingest_interval: int,
+    review_batch: int,
+    review_interval: int,
+    no_review: bool,
+    no_ingest: bool,
+    no_search_sync: bool,
+    supabase: bool,
+) -> None:
+    """Run dual pipelines: ingestion + processing (review, search sync) concurrently."""
+    if supabase:
+        _use_supabase()
+    if no_review and no_ingest:
+        click.echo("Error: Cannot disable both pipelines")
+        raise SystemExit(1)
+    asyncio.run(_run_dual_pipeline(
+        source=source,
+        limit=limit,
+        concurrency=concurrency,
+        ingest_interval=ingest_interval,
+        review_batch=review_batch,
+        review_interval=review_interval,
+        run_ingest_pipeline=not no_ingest,
+        run_review_pipeline=not no_review,
+        sync_search=not no_search_sync,
+    ))
+
+
+async def _run_dual_pipeline(
+    source: str | None,
+    limit: int,
+    concurrency: int,
+    ingest_interval: int,
+    review_batch: int,
+    review_interval: int,
+    run_ingest_pipeline: bool,
+    run_review_pipeline: bool,
+    sync_search: bool,
+) -> None:
+    """Run ingestion and processing as concurrent async loops.
+
+    Pipeline 1 (Ingest): discover → scrape → insert articles
+    Pipeline 2 (Process): review unreviewed → sync to Meilisearch
+    """
+    from news_agg.db import close_pool
+
+    log.info(f"{BOLD}DUAL PIPELINE{RESET} — starting concurrent loops")
+    if run_ingest_pipeline:
+        log.info(f"  {DIM}Ingest: every {ingest_interval}s, limit={limit}, concurrency={concurrency}{RESET}")
+    if run_review_pipeline:
+        log.info(f"  {DIM}Process: every {review_interval}s, batch={review_batch}, search_sync={sync_search}{RESET}")
+    if source:
+        log.info(f"  {DIM}Source filter: {source}{RESET}")
+    log.info(f"  {DIM}Press Ctrl+C to stop{RESET}\n")
+
+    tasks = []
+
+    if run_ingest_pipeline:
+        tasks.append(asyncio.create_task(
+            _ingest_loop(source, limit, concurrency, ingest_interval),
+            name="ingest-loop",
+        ))
+
+    if run_review_pipeline:
+        tasks.append(asyncio.create_task(
+            _process_loop(source, review_batch, review_interval, sync_search),
+            name="process-loop",
+        ))
+
+    try:
+        await asyncio.gather(*tasks)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        log.info(f"\n{BOLD}Shutting down pipelines...{RESET}")
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        await close_pool()
+        log.info(f"{GREEN}✓{RESET} Pipelines stopped")
+
+
+async def _ingest_loop(
+    source: str | None,
+    limit: int,
+    concurrency: int,
+    interval: int,
+) -> None:
+    """Continuously ingest articles on an interval."""
+    from news_agg.pipeline import run_ingest
+
+    cycle = 0
+    while True:
+        cycle += 1
+        log.info(f"{BOLD}[INGEST #{cycle}]{RESET} starting cycle")
+        try:
+            result = await run_ingest(
+                source_slug=source,
+                limit=limit,
+                concurrency=concurrency,
+            )
+            inserted = result.get("inserted", 0)
+            if inserted:
+                log.info(f"{GREEN}[INGEST #{cycle}]{RESET} +{inserted} articles")
+            else:
+                log.info(f"{DIM}[INGEST #{cycle}] no new articles{RESET}")
+        except Exception as e:
+            log.error(f"{RED}[INGEST #{cycle}] error: {e}{RESET}")
+
+        log.info(f"{DIM}[INGEST] next cycle in {interval}s{RESET}")
+        await asyncio.sleep(interval)
+
+
+async def _process_loop(
+    source: str | None,
+    review_batch: int,
+    interval: int,
+    sync_search: bool,
+) -> None:
+    """Continuously review unreviewed articles and sync to Meilisearch."""
+    from news_agg.agents.runner import run_review
+    from news_agg.search import sync_articles
+
+    cycle = 0
+    while True:
+        cycle += 1
+        log.info(f"{BOLD}[PROCESS #{cycle}]{RESET} starting cycle")
+
+        # Step 1: Review unreviewed articles
+        try:
+            result = await run_review(
+                sample=review_batch,
+                source=source,
+                unreviewed=True,
+                managed_pool=True,
+            )
+            reviewed = result.get("total", 0)
+            passes = result.get("passes", 0)
+            if reviewed:
+                log.info(
+                    f"{GREEN}[PROCESS #{cycle}]{RESET} reviewed {reviewed} "
+                    f"({passes} pass, {result.get('warns', 0)} warn, {result.get('fails', 0)} fail)"
+                )
+            else:
+                log.info(f"{DIM}[PROCESS #{cycle}] no unreviewed articles{RESET}")
+        except Exception as e:
+            log.error(f"{RED}[PROCESS #{cycle}] review error: {e}{RESET}")
+
+        # Step 2: Sync to Meilisearch
+        if sync_search:
+            try:
+                sync_result = await sync_articles(source_slug=source)
+                log.info(
+                    f"{DIM}[PROCESS #{cycle}] search sync: "
+                    f"{sync_result.get('indexed', 0)} indexed{RESET}"
+                )
+            except Exception as e:
+                log.error(f"{RED}[PROCESS #{cycle}] search sync error: {e}{RESET}")
+
+        log.info(f"{DIM}[PROCESS] next cycle in {interval}s{RESET}")
+        await asyncio.sleep(interval)
 
 
 @cli.command()

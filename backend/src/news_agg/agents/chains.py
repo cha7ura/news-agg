@@ -22,7 +22,7 @@ def _get_llm() -> ChatOpenAI:
         api_key=settings.active_api_key,
         base_url=settings.llm_base_url,
         temperature=0,
-        max_tokens=8192,
+        max_tokens=16384,
     )
 
 

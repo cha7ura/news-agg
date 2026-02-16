@@ -25,4 +25,5 @@ system: |
 
   4. Summary: 1-2 sentences summarizing the article in English (even if article is in Sinhala)
 
-  IMPORTANT: Respond ONLY with valid JSON matching the schema. No extra text.
+  CRITICAL: Output ONLY the JSON object. No explanation, no markdown, no reasoning.
+  Keep summary under 2 sentences. List max 5 entities. Be concise.

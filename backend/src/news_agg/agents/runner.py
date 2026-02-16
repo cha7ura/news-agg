@@ -29,8 +29,17 @@ from news_agg.utils.logging import get_logger, GREEN, YELLOW, RED, BOLD, DIM, RE
 
 log = get_logger()
 
-# Rate limit between OpenRouter calls (free tier)
-_CALL_DELAY_S = 1.5
+# Minimum delay between LLM calls (seconds)
+_CALL_DELAY_S = 2.0
+# Retry settings for rate-limited or transient errors
+_MAX_RETRIES = 3
+_RETRY_BASE_S = 2.0  # exponential: 2s, 4s, 8s
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Check if an exception is a rate-limit (429) error."""
+    msg = str(exc)
+    return "429" in msg or "rate limit" in msg.lower()
 
 
 def _parse_response(response, model_class):
@@ -49,6 +58,24 @@ def _parse_response(response, model_class):
         text = text.split("```")[1].split("```")[0]
 
     return model_class.model_validate_json(text.strip())
+
+
+async def _invoke_with_retry(chain, input_data: dict, config: dict, model_class, label: str):
+    """Invoke a chain with exponential backoff retry on rate-limit errors."""
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            raw = await chain.ainvoke(input_data, config=config)
+            return _parse_response(raw, model_class)
+        except Exception as e:
+            if _is_rate_limit_error(e) and attempt < _MAX_RETRIES:
+                wait = _RETRY_BASE_S * (2 ** attempt)
+                log.warning(
+                    f"  {YELLOW}↻{RESET} {label} rate-limited, "
+                    f"retry {attempt + 1}/{_MAX_RETRIES} in {wait:.0f}s"
+                )
+                await asyncio.sleep(wait)
+                continue
+            raise
 
 
 async def review_article(
@@ -75,8 +102,9 @@ async def review_article(
 
     if not categorize_only:
         try:
-            raw = await qa_chain.ainvoke(input_data, config=config)
-            qa_report = _parse_response(raw, QAReport)
+            qa_report = await _invoke_with_retry(
+                qa_chain, input_data, config, QAReport, "QA review"
+            )
         except Exception as e:
             log.error(f"  {RED}✗{RESET} QA review failed: {e}")
             return article, None, None
@@ -89,8 +117,9 @@ async def review_article(
 
     if cat_chain:
         try:
-            raw = await cat_chain.ainvoke(input_data, config=config)
-            cat_result = _parse_response(raw, CategoryResult)
+            cat_result = await _invoke_with_retry(
+                cat_chain, input_data, config, CategoryResult, "Categorization"
+            )
         except Exception as e:
             log.error(f"  {RED}✗{RESET} Categorization failed: {e}")
 
@@ -175,10 +204,14 @@ async def run_review(
     categorize_only: bool = False,
     save_to_graph: bool = False,
     unreviewed: bool = False,
+    managed_pool: bool = False,
 ) -> dict:
     """Main entry point: sample articles → review → report → optionally save to graph.
 
     Returns a summary dict: {total, passes, warns, fails, errors, graph_saved}.
+
+    Args:
+        managed_pool: If True, caller manages DB pool lifecycle (don't close on exit).
     """
     pool = await get_pool()
 
@@ -283,5 +316,6 @@ async def run_review(
         }
 
     finally:
-        await close_pool()
-        await close_graphiti_client()
+        if not managed_pool:
+            await close_pool()
+            await close_graphiti_client()

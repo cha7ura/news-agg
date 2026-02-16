@@ -24,4 +24,5 @@ system: |
   - 3-4: Significant issues (wrong language, heavy artifacts)
   - 1-2: Unusable (mostly garbage, completely wrong content)
 
-  IMPORTANT: Respond ONLY with valid JSON matching the schema. No extra text.
+  CRITICAL: Output ONLY the JSON object. No explanation, no markdown, no reasoning.
+  Keep issue descriptions under 20 words each. Be concise.

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>news-agg dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #c9d1d9; --dim: #8b949e; --green: #3fb950;
+    --yellow: #d29922; --red: #f85149; --blue: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 13px; background: var(--bg); color: var(--text);
+    padding: 20px; max-width: 1400px; margin: 0 auto;
+  }
+  h1 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  h2 { font-size: 14px; font-weight: 600; margin: 24px 0 8px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .header .meta { color: var(--dim); font-size: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  .card .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .card .value { font-size: 22px; font-weight: 700; }
+  .card .value.green { color: var(--green); }
+  .card .value.yellow { color: var(--yellow); }
+  .card .value.blue { color: var(--blue); }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  th { text-align: left; padding: 8px 10px; background: var(--bg); color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  td { padding: 6px 10px; border-top: 1px solid var(--border); }
+  tr:hover td { background: rgba(88, 166, 255, 0.04); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pass { color: var(--green); }
+  .warn { color: var(--yellow); }
+  .fail { color: var(--red); }
+  .dim { color: var(--dim); }
+  .lang { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; background: var(--border); }
+  .activity { display: flex; align-items: flex-end; gap: 2px; height: 32px; margin-top: 4px; }
+  .activity .bar { width: 16px; background: var(--blue); border-radius: 2px 2px 0 0; min-height: 2px; }
+  .run-status { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+  .run-status.completed { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .run-status.failed { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+  .run-status.running { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+  .refresh-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .error-banner { background: rgba(248, 81, 73, 0.1); border: 1px solid var(--red); border-radius: 6px; padding: 10px; color: var(--red); margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>news-agg pipeline</h1>
+    <span class="meta">Sri Lankan news aggregation</span>
+  </div>
+  <div class="meta">
+    <span class="refresh-indicator"></span>
+    auto-refresh 30s &middot; <span id="lastUpdate">loading...</span>
+  </div>
+</div>
+
+<div id="error" class="error-banner"></div>
+
+<div id="cards" class="cards">
+  <div class="card"><div class="label">Total Articles</div><div class="value" id="totalArticles">-</div></div>
+  <div class="card"><div class="label">Reviewed</div><div class="value green" id="totalReviewed">-</div></div>
+  <div class="card"><div class="label">Meilisearch Indexed</div><div class="value blue" id="meiliIndexed">-</div></div>
+  <div class="card"><div class="label">Graph Saved</div><div class="value yellow" id="graphSaved">-</div></div>
+</div>
+
+<h2>7-Day Ingestion Activity</h2>
+<div id="activityChart" class="activity"></div>
+
+<h2>Sources</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Source</th><th>Lang</th>
+      <th class="num">Articles</th><th class="num">Reviewed</th>
+      <th class="num">Pass</th><th class="num">Warn</th><th class="num">Fail</th>
+      <th class="num">Categorized</th><th class="num">Graph</th>
+      <th class="num">Dead Links</th><th>Last Article</th>
+    </tr>
+  </thead>
+  <tbody id="sourceBody"></tbody>
+</table>
+
+<h2>Dead Links by Source</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Source</th><th>Lang</th>
+      <th class="num">Total</th><th class="num">Permanent</th><th class="num">Retryable</th>
+      <th class="num">404</th><th class="num">Timeout</th><th class="num">Empty</th><th class="num">Other</th>
+    </tr>
+  </thead>
+  <tbody id="deadBody"></tbody>
+</table>
+
+<h2>Review Models</h2>
+<table>
+  <thead><tr><th>Model</th><th class="num">Reviews</th></tr></thead>
+  <tbody id="modelBody"></tbody>
+</table>
+
+<h2>Recent Agent Runs</h2>
+<table>
+  <thead>
+    <tr><th>Type</th><th>Status</th><th>Started</th><th>Duration</th><th>Result</th></tr>
+  </thead>
+  <tbody id="runBody"></tbody>
+</table>
+
+<script>
+const API = '/dashboard/stats';
+const REFRESH_MS = 30000;
+
+function fmt(n) {
+  if (n === null || n === undefined) return '-';
+  return n.toLocaleString();
+}
+
+function ago(isoStr) {
+  if (!isoStr) return '-';
+  const d = new Date(isoStr);
+  const diff = Date.now() - d.getTime();
+  if (diff < 3600000) return Math.round(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.round(diff / 3600000) + 'h ago';
+  return Math.round(diff / 86400000) + 'd ago';
+}
+
+function duration(start, end) {
+  if (!start || !end) return '-';
+  const ms = new Date(end) - new Date(start);
+  if (ms < 60000) return Math.round(ms / 1000) + 's';
+  return Math.round(ms / 60000) + 'm';
+}
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined) e.textContent = String(text);
+  if (cls) e.className = cls;
+  return e;
+}
+
+function clearChildren(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function addRow(tbody, cells) {
+  const tr = document.createElement('tr');
+  cells.forEach(([text, cls]) => {
+    const td = el('td', text, cls || '');
+    tr.appendChild(td);
+  });
+  tbody.appendChild(tr);
+}
+
+function render(data) {
+  // Totals
+  document.getElementById('totalArticles').textContent = fmt(data.totals.articles);
+  document.getElementById('totalReviewed').textContent = fmt(data.totals.reviewed);
+  document.getElementById('meiliIndexed').textContent = fmt(data.totals.meilisearch_indexed);
+  document.getElementById('graphSaved').textContent = fmt(data.totals.graph_saved);
+
+  // Activity chart
+  const chart = document.getElementById('activityChart');
+  clearChildren(chart);
+  if (data.activity.length) {
+    const max = Math.max(...data.activity.map(a => a.count), 1);
+    data.activity.forEach(a => {
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = Math.max((a.count / max) * 32, 2) + 'px';
+      bar.title = a.date + ': ' + a.count + ' articles';
+      chart.appendChild(bar);
+    });
+  }
+
+  // Source table
+  const sb = document.getElementById('sourceBody');
+  clearChildren(sb);
+  data.sources.filter(s => s.total_articles > 0).forEach(s => {
+    const tr = document.createElement('tr');
+    // Name + slug
+    const nameTd = document.createElement('td');
+    nameTd.appendChild(document.createTextNode(s.name + ' '));
+    const slugSpan = el('span', s.slug, 'dim');
+    nameTd.appendChild(slugSpan);
+    tr.appendChild(nameTd);
+    // Lang
+    const langTd = document.createElement('td');
+    langTd.appendChild(el('span', s.language, 'lang'));
+    tr.appendChild(langTd);
+    // Numbers
+    [[fmt(s.total_articles), 'num'], [fmt(s.reviewed), 'num'],
+     [fmt(s.qa_pass), 'num pass'], [fmt(s.qa_warn), 'num warn'], [fmt(s.qa_fail), 'num fail'],
+     [fmt(s.categorized), 'num'], [fmt(s.graph_saved), 'num'], [fmt(s.dead_links), 'num'],
+     [ago(s.latest_article), 'dim']
+    ].forEach(([text, cls]) => {
+      tr.appendChild(el('td', text, cls));
+    });
+    sb.appendChild(tr);
+  });
+
+  // Dead links table
+  const db = document.getElementById('deadBody');
+  clearChildren(db);
+  data.dead_links.forEach(d => {
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.appendChild(document.createTextNode(d.name + ' '));
+    nameTd.appendChild(el('span', d.slug, 'dim'));
+    tr.appendChild(nameTd);
+    const langTd = document.createElement('td');
+    langTd.appendChild(el('span', d.language, 'lang'));
+    tr.appendChild(langTd);
+    [[fmt(d.total), 'num'], [fmt(d.permanent), 'num fail'], [fmt(d.retryable), 'num warn'],
+     [fmt(d.err_404), 'num'], [fmt(d.err_timeout), 'num'], [fmt(d.err_empty), 'num'], [fmt(d.err_other), 'num']
+    ].forEach(([text, cls]) => {
+      tr.appendChild(el('td', text, cls));
+    });
+    db.appendChild(tr);
+  });
+
+  // Model table
+  const mb = document.getElementById('modelBody');
+  clearChildren(mb);
+  if (data.models.length) {
+    data.models.forEach(m => addRow(mb, [[m.reviewed_by, ''], [fmt(m.count), 'num']]));
+  } else {
+    addRow(mb, [['No reviews yet', 'dim']]);
+  }
+
+  // Agent runs
+  const rb = document.getElementById('runBody');
+  clearChildren(rb);
+  if (data.runs.length) {
+    data.runs.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.appendChild(el('td', r.run_type));
+      const statusTd = document.createElement('td');
+      const sc = r.status === 'completed' ? 'completed' : r.status === 'failed' ? 'failed' : 'running';
+      statusTd.appendChild(el('span', r.status, 'run-status ' + sc));
+      tr.appendChild(statusTd);
+      tr.appendChild(el('td', ago(r.started_at), 'dim'));
+      tr.appendChild(el('td', duration(r.started_at, r.completed_at), 'dim'));
+      const result = r.result || {};
+      let summary = '-';
+      if (result.total !== undefined) {
+        summary = (result.passes || 0) + 'p/' + (result.warns || 0) + 'w/' + (result.fails || 0) + 'f';
+      } else if (r.error_message) {
+        summary = r.error_message.substring(0, 60);
+      }
+      tr.appendChild(el('td', summary, 'dim'));
+      rb.appendChild(tr);
+    });
+  } else {
+    addRow(rb, [['No agent runs yet', 'dim']]);
+  }
+
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+  document.getElementById('error').style.display = 'none';
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    render(await res.json());
+  } catch (e) {
+    const errEl = document.getElementById('error');
+    errEl.textContent = 'Failed to load: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>
