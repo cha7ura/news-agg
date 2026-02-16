@@ -262,6 +262,200 @@ async def fetch_random_articles(
     return [dict(r) for r in rows]
 
 
+async def update_article_qa(
+    pool: asyncpg.Pool,
+    article_id: UUID,
+    qa_status: str,
+    qa_score: int,
+    qa_issues: list[dict] | None = None,
+    category: str | None = None,
+    entities: list[str] | None = None,
+    location: str | None = None,
+    summary: str | None = None,
+) -> None:
+    """Persist QA review results on an article row."""
+    import json
+
+    await pool.execute(
+        """
+        UPDATE articles SET
+            qa_status = $2,
+            qa_score = $3,
+            qa_issues = $4::jsonb,
+            category = $5,
+            entities = $6,
+            location = $7,
+            summary = $8,
+            reviewed_at = NOW()
+        WHERE id = $1
+        """,
+        article_id,
+        qa_status,
+        qa_score,
+        json.dumps(qa_issues) if qa_issues else None,
+        category,
+        entities,
+        location,
+        summary,
+    )
+
+
+async def get_unreviewed_articles(
+    pool: asyncpg.Pool,
+    limit: int = 50,
+    source_slug: str | None = None,
+) -> list[dict]:
+    """Fetch articles that haven't been QA reviewed yet."""
+    if source_slug:
+        rows = await pool.fetch(
+            """
+            SELECT a.id, a.title, a.content, a.author, a.published_at,
+                   a.image_url, a.language, a.url,
+                   s.name as source_name, s.slug as source_slug
+            FROM articles a
+            JOIN sources s ON s.id = a.source_id
+            WHERE a.qa_status IS NULL AND s.slug = $1
+            ORDER BY a.created_at DESC
+            LIMIT $2
+            """,
+            source_slug,
+            limit,
+        )
+    else:
+        rows = await pool.fetch(
+            """
+            SELECT a.id, a.title, a.content, a.author, a.published_at,
+                   a.image_url, a.language, a.url,
+                   s.name as source_name, s.slug as source_slug
+            FROM articles a
+            JOIN sources s ON s.id = a.source_id
+            WHERE a.qa_status IS NULL
+            ORDER BY a.created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+async def get_unreviewed_count(
+    pool: asyncpg.Pool,
+    source_slug: str | None = None,
+) -> int:
+    """Count articles that haven't been QA reviewed."""
+    if source_slug:
+        return await pool.fetchval(
+            """
+            SELECT COUNT(*) FROM articles a
+            JOIN sources s ON s.id = a.source_id
+            WHERE a.qa_status IS NULL AND s.slug = $1
+            """,
+            source_slug,
+        )
+    return await pool.fetchval("SELECT COUNT(*) FROM articles WHERE qa_status IS NULL")
+
+
+async def get_graph_ready_articles(
+    pool: asyncpg.Pool,
+    limit: int = 20,
+) -> list[dict]:
+    """Fetch articles that passed QA but haven't been saved to graph yet."""
+    rows = await pool.fetch(
+        """
+        SELECT a.id, a.title, a.content, a.author, a.published_at,
+               a.image_url, a.language, a.url, a.category, a.entities,
+               a.location, a.summary,
+               s.name as source_name, s.slug as source_slug
+        FROM articles a
+        JOIN sources s ON s.id = a.source_id
+        WHERE a.qa_status = 'pass' AND a.graph_saved = false
+        ORDER BY a.reviewed_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def mark_article_graph_saved(pool: asyncpg.Pool, article_id: UUID) -> None:
+    """Mark an article as saved to the knowledge graph."""
+    await pool.execute(
+        "UPDATE articles SET graph_saved = true WHERE id = $1",
+        article_id,
+    )
+
+
+# --- Agent run history ---
+
+async def create_agent_run(
+    pool: asyncpg.Pool,
+    run_type: str,
+    thread_id: str,
+    config: dict | None = None,
+) -> UUID:
+    """Create a new agent run record, return its ID."""
+    import json
+
+    row = await pool.fetchrow(
+        """
+        INSERT INTO agent_runs (run_type, thread_id, config)
+        VALUES ($1, $2, $3::jsonb)
+        RETURNING id
+        """,
+        run_type,
+        thread_id,
+        json.dumps(config or {}),
+    )
+    return row["id"]
+
+
+async def update_agent_run(
+    pool: asyncpg.Pool,
+    run_id: UUID,
+    status: str,
+    result: dict | None = None,
+    decisions: list[dict] | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Update an agent run with completion status and results."""
+    import json
+
+    await pool.execute(
+        """
+        UPDATE agent_runs SET
+            status = $2,
+            result = $3::jsonb,
+            decisions = $4::jsonb,
+            completed_at = NOW(),
+            error_message = $5
+        WHERE id = $1
+        """,
+        run_id,
+        status,
+        json.dumps(result or {}),
+        json.dumps(decisions or []),
+        error_message,
+    )
+
+
+async def get_recent_runs(
+    pool: asyncpg.Pool,
+    limit: int = 10,
+) -> list[dict]:
+    """Get the most recent agent runs."""
+    rows = await pool.fetch(
+        """
+        SELECT id, run_type, status, thread_id, config, result,
+               decisions, started_at, completed_at, error_message
+        FROM agent_runs
+        ORDER BY started_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_dead_link_stats(pool: asyncpg.Pool) -> list[dict]:
     """Dead link counts per source. For the `check` CLI command."""
     rows = await pool.fetch(

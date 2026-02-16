@@ -332,7 +332,7 @@ async def _backup() -> None:
         await dst_pool.execute(schema_sql)
         click.echo(f"  {GREEN}✓{RESET} Schema applied")
 
-        # 2. Copy sources (ON CONFLICT DO NOTHING — preserve local seeds)
+        # 2. Sync sources + build ID remapping (Supabase IDs → local IDs)
         click.echo(f"  {DIM}Syncing sources...{RESET}")
         src_sources = await src_pool.fetch("SELECT * FROM sources ORDER BY name")
         for s in src_sources:
@@ -345,15 +345,25 @@ async def _backup() -> None:
                 s["id"], s["name"], s["slug"], s["url"], s["rss_url"],
                 s["language"], s["is_active"], s["created_at"], s["updated_at"],
             )
-        click.echo(f"  {GREEN}✓{RESET} {len(src_sources)} sources synced")
 
-        # 3. Copy articles in batches
+        # Build source_id mapping: supabase_id → local_id (via slug)
+        supa_sources = {s["id"]: s["slug"] for s in src_sources}
+        local_sources = await dst_pool.fetch("SELECT id, slug FROM sources")
+        local_by_slug = {s["slug"]: s["id"] for s in local_sources}
+        id_map = {}
+        for supa_id, slug in supa_sources.items():
+            if slug in local_by_slug:
+                id_map[supa_id] = local_by_slug[slug]
+        click.echo(f"  {GREEN}✓{RESET} {len(src_sources)} sources synced ({len(id_map)} mapped)")
+
+        # 3. Copy articles in batches with source_id remapping
         total = await src_pool.fetchval("SELECT COUNT(*) FROM articles")
         dst_before = await dst_pool.fetchval("SELECT COUNT(*) FROM articles")
         click.echo(f"  {DIM}Copying {total} articles ({dst_before} already in local)...{RESET}")
 
         batch_size = 500
         offset = 0
+        skipped = 0
 
         insert_sql = """
             INSERT INTO articles (
@@ -377,14 +387,20 @@ async def _backup() -> None:
                 batch_size, offset,
             )
 
-            args = [
-                (r["source_id"], r["url"], r["title"], r["content"],
-                 r["excerpt"], r["image_url"], r["author"], r["published_at"],
-                 r["scraped_at"], r["language"], r["original_language"],
-                 r["is_processed"], r["created_at"], r["updated_at"])
-                for r in rows
-            ]
-            await dst_pool.executemany(insert_sql, args)
+            args = []
+            for r in rows:
+                mapped_id = id_map.get(r["source_id"])
+                if not mapped_id:
+                    skipped += 1
+                    continue
+                args.append((
+                    mapped_id, r["url"], r["title"], r["content"],
+                    r["excerpt"], r["image_url"], r["author"], r["published_at"],
+                    r["scraped_at"], r["language"], r["original_language"],
+                    r["is_processed"], r["created_at"], r["updated_at"],
+                ))
+            if args:
+                await dst_pool.executemany(insert_sql, args)
 
             offset += batch_size
             click.echo(
@@ -394,8 +410,10 @@ async def _backup() -> None:
         dst_after = await dst_pool.fetchval("SELECT COUNT(*) FROM articles")
         inserted = dst_after - dst_before
         click.echo(f"  {GREEN}✓{RESET} {inserted} new articles copied ({dst_after} total in local)")
+        if skipped:
+            click.echo(f"  {DIM}({skipped} skipped — unmapped source_id){RESET}")
 
-        # 4. Copy dead_links in batches
+        # 4. Copy dead_links in batches with source_id remapping
         dl_total = await src_pool.fetchval("SELECT COUNT(*) FROM dead_links")
         if dl_total > 0:
             dl_before = await dst_pool.fetchval("SELECT COUNT(*) FROM dead_links")
@@ -418,12 +436,17 @@ async def _backup() -> None:
                     """,
                     batch_size, dl_offset,
                 )
-                args = [
-                    (r["source_id"], r["url"], r["error_type"], r["first_failed_at"],
-                     r["last_checked_at"], r["retry_count"], r["created_at"])
-                    for r in rows
-                ]
-                await dst_pool.executemany(dl_insert_sql, args)
+                args = []
+                for r in rows:
+                    mapped_id = id_map.get(r["source_id"])
+                    if not mapped_id:
+                        continue
+                    args.append((
+                        mapped_id, r["url"], r["error_type"], r["first_failed_at"],
+                        r["last_checked_at"], r["retry_count"], r["created_at"],
+                    ))
+                if args:
+                    await dst_pool.executemany(dl_insert_sql, args)
                 dl_offset += batch_size
 
             dl_after = await dst_pool.fetchval("SELECT COUNT(*) FROM dead_links")
@@ -615,6 +638,283 @@ def review(sample: int, source: str | None, since: str | None, prompt_version: s
         categorize_only=categorize_only,
         save_to_graph=save,
     ))
+
+
+@cli.group()
+def agent() -> None:
+    """Agentic pipeline commands (LangGraph orchestrator)."""
+    pass
+
+
+@agent.command()
+@click.option("--sources", default=None, help="Comma-separated source slugs to focus on")
+@click.option("--limit", default=20, help="Article limit per source for ingestion")
+@click.option("--run-type", default="full_cycle", type=click.Choice(["full_cycle", "ingest_only", "review_only"]))
+def run(sources: str | None, limit: int, run_type: str) -> None:
+    """Run a full autonomous pipeline cycle."""
+    source_list = [s.strip() for s in sources.split(",")] if sources else None
+    asyncio.run(_agent_run(source_list, limit, run_type))
+
+
+async def _agent_run(sources: list[str] | None, limit: int, run_type: str) -> None:
+    from news_agg.agents.graph import run_agent_cycle
+    from news_agg.db import close_pool
+
+    try:
+        result = await run_agent_cycle(sources=sources, limit=limit, run_type=run_type)
+        status = result.get("status", "unknown")
+        run_id = result.get("run_id", "?")
+        click.echo(f"\n  Agent run {run_id}: {status}")
+        if result.get("error"):
+            click.echo(f"  Error: {result['error']}")
+    finally:
+        await close_pool()
+
+
+@agent.command()
+@click.option("--limit", default=10, help="Number of recent runs to show")
+def history(limit: int) -> None:
+    """Show recent agent run history."""
+    asyncio.run(_agent_history(limit))
+
+
+async def _agent_history(limit: int) -> None:
+    from news_agg.db import close_pool, get_pool, get_recent_runs
+
+    try:
+        pool = await get_pool()
+        runs = await get_recent_runs(pool, limit)
+
+        if not runs:
+            click.echo("No agent runs found.")
+            return
+
+        click.echo(f"\n{BOLD}Agent Run History{RESET}\n")
+        click.echo(f"  {'Started':<20} {'Type':<15} {'Status':<12} {'Summary'}")
+        click.echo(f"  {'─' * 20} {'─' * 15} {'─' * 12} {'─' * 40}")
+
+        for run in runs:
+            started = run["started_at"].strftime("%Y-%m-%d %H:%M") if run["started_at"] else "?"
+            result = run.get("result", {})
+            summary = result.get("summary", "")[:40] if isinstance(result, dict) else ""
+            error = run.get("error_message")
+            if error:
+                summary = f"ERROR: {error[:35]}"
+            click.echo(
+                f"  {started:<20} {run['run_type']:<15} {run['status']:<12} {summary}"
+            )
+
+        click.echo()
+    finally:
+        await close_pool()
+
+
+@agent.command()
+@click.argument("run_id")
+def inspect(run_id: str) -> None:
+    """Inspect a specific agent run's details."""
+    asyncio.run(_agent_inspect(run_id))
+
+
+async def _agent_inspect(run_id: str) -> None:
+    import json as json_mod
+
+    from news_agg.db import close_pool, get_pool
+
+    try:
+        pool = await get_pool()
+        row = await pool.fetchrow(
+            "SELECT * FROM agent_runs WHERE id = $1::uuid", run_id
+        )
+        if not row:
+            click.echo(f"Run {run_id} not found.")
+            return
+
+        run = dict(row)
+        click.echo(f"\n{BOLD}Agent Run: {run_id}{RESET}\n")
+        click.echo(f"  Type:      {run['run_type']}")
+        click.echo(f"  Status:    {run['status']}")
+        click.echo(f"  Thread:    {run['thread_id']}")
+        click.echo(f"  Started:   {run['started_at']}")
+        click.echo(f"  Completed: {run['completed_at'] or '—'}")
+
+        if run.get("error_message"):
+            click.echo(f"  Error:     {run['error_message']}")
+
+        config = run.get("config", {})
+        if config:
+            click.echo(f"\n  Config: {json_mod.dumps(config, indent=2)}")
+
+        result = run.get("result", {})
+        if result:
+            click.echo(f"\n  Result: {json_mod.dumps(result, indent=2)}")
+
+        decisions = run.get("decisions", [])
+        if decisions:
+            click.echo(f"\n  Decisions:")
+            for d in decisions:
+                click.echo(f"    - {json_mod.dumps(d)}")
+
+        click.echo()
+    finally:
+        await close_pool()
+
+
+@cli.group()
+def search() -> None:
+    """Meilisearch full-text search commands."""
+    pass
+
+
+@search.command("sync")
+@click.option("--source", default=None, help="Sync only articles from this source slug")
+def search_sync(source: str | None) -> None:
+    """Sync articles from PostgreSQL → Meilisearch index."""
+    from news_agg.search import sync_articles
+
+    asyncio.run(sync_articles(source_slug=source))
+
+
+@search.command("query")
+@click.argument("query_text")
+@click.option("--limit", default=10, help="Max results")
+@click.option("--source", default=None, help="Filter by source slug")
+@click.option("--lang", default=None, help="Filter by language (en, si)")
+@click.option("--category", default=None, help="Filter by category")
+def search_query(query_text: str, limit: int, source: str | None, lang: str | None, category: str | None) -> None:
+    """Search articles in Meilisearch."""
+    from news_agg.search import search_articles
+
+    result = search_articles(query_text, limit, source, lang, category)
+    hits = result.get("hits", [])
+    est_total = result.get("estimatedTotalHits", 0)
+    time_ms = result.get("processingTimeMs", 0)
+
+    click.echo(f"\n{BOLD}Search: \"{query_text}\"{RESET}  ({est_total} results, {time_ms}ms)\n")
+    for i, hit in enumerate(hits, 1):
+        title = hit.get("title", "(no title)")[:70]
+        source_name = hit.get("source_name", "?")
+        published = hit.get("published_at", "")[:10] if hit.get("published_at") else "—"
+        click.echo(f"  {i}. {title}")
+        click.echo(f"     {DIM}{source_name} | {published} | {hit.get('language', '?')}{RESET}")
+    click.echo()
+
+
+@search.command("stats")
+def search_stats() -> None:
+    """Show Meilisearch index stats."""
+    from news_agg.search import get_index_stats
+
+    stats = get_index_stats()
+    click.echo(f"\n{BOLD}Meilisearch Index{RESET}")
+    click.echo(f"  Documents: {stats['number_of_documents']}")
+    click.echo(f"  Indexing:  {stats['is_indexing']}\n")
+
+
+@cli.group()
+def snapshot() -> None:
+    """R2 database snapshot commands (push/pull between PCs)."""
+    pass
+
+
+@snapshot.command("push")
+@click.option("--label", default=None, help="Label for this snapshot (e.g. 'pc-b', 'pre-migration')")
+@click.option("--all", "push_all_flag", is_flag=True, help="Push PostgreSQL + Neo4j (full data sync)")
+@click.option("--neo4j-only", is_flag=True, help="Push only Neo4j snapshot")
+def snapshot_push(label: str | None, push_all_flag: bool, neo4j_only: bool) -> None:
+    """Dump data stores → compress → upload to Cloudflare R2."""
+    from news_agg.snapshot import push_all, push_neo4j, push_pg
+
+    if push_all_flag:
+        results = push_all(label)
+        click.echo(f"\n  Snapshots uploaded:")
+        for store, key in results.items():
+            click.echo(f"    {store}: {key or 'skipped'}")
+        click.echo()
+    elif neo4j_only:
+        key = push_neo4j(label)
+        click.echo(f"\n  Neo4j snapshot uploaded: {key}\n")
+    else:
+        key = push_pg(label)
+        click.echo(f"\n  PostgreSQL snapshot uploaded: {key}\n")
+
+
+@snapshot.command("pull")
+@click.option("--key", default=None, help="Specific snapshot key (default: latest)")
+@click.option("--all", "pull_all_flag", is_flag=True, help="Pull PostgreSQL + Neo4j + rebuild Meilisearch")
+@click.option("--neo4j-only", is_flag=True, help="Pull only Neo4j snapshot")
+@click.option("--no-search", is_flag=True, help="Skip Meilisearch rebuild (with --all)")
+def snapshot_pull(key: str | None, pull_all_flag: bool, neo4j_only: bool, no_search: bool) -> None:
+    """Download snapshots from R2 → restore locally."""
+    if pull_all_flag:
+        from news_agg.snapshot import pull_all
+        results = asyncio.run(pull_all(rebuild_search=not no_search))
+        click.echo(f"\n  Restore complete:")
+        for store, status in results.items():
+            click.echo(f"    {store}: {status}")
+        click.echo()
+    elif neo4j_only:
+        from news_agg.snapshot import pull_neo4j
+        pull_neo4j(key)
+    else:
+        from news_agg.snapshot import pull_pg
+        pull_pg(key)
+
+
+@snapshot.command("list")
+@click.option("--limit", default=20, help="Number of snapshots to list")
+def snapshot_list(limit: int) -> None:
+    """List available snapshots in R2 (PostgreSQL + Neo4j)."""
+    from news_agg.snapshot import list_snapshots
+
+    snapshots = list_snapshots(limit)
+    if not snapshots:
+        click.echo("No snapshots found.")
+        return
+
+    click.echo(f"\n{BOLD}R2 Snapshots{RESET}\n")
+    click.echo(f"  {'Type':<12} {'Key':<45} {'Size':>8} {'Modified'}")
+    click.echo(f"  {'─' * 12} {'─' * 45} {'─' * 8} {'─' * 20}")
+    for s in snapshots:
+        click.echo(f"  {s['type']:<12} {s['key']:<45} {s['size_mb']:>6.1f}MB {s['last_modified']}")
+    click.echo()
+
+
+@cli.command("db-migrate")
+def db_migrate() -> None:
+    """Apply database migrations (for existing databases)."""
+    asyncio.run(_db_migrate())
+
+
+async def _db_migrate() -> None:
+    from pathlib import Path
+
+    import asyncpg
+
+    from news_agg.config import settings
+
+    migrations_dir = Path(__file__).resolve().parents[3] / "docker" / "migrations"
+    if not migrations_dir.exists():
+        click.echo("No migrations directory found.")
+        return
+
+    migrations = sorted(migrations_dir.glob("*.sql"))
+    if not migrations:
+        click.echo("No migration files found.")
+        return
+
+    conn = await asyncpg.connect(settings.database_url)
+    try:
+        for migration in migrations:
+            click.echo(f"  Applying {migration.name}...")
+            sql = migration.read_text()
+            await conn.execute(sql)
+            click.echo(f"  {GREEN}✓{RESET} {migration.name}")
+        click.echo(f"\n  {GREEN}✓{RESET} All migrations applied")
+    except Exception as e:
+        click.echo(f"  {RED}✗{RESET} Migration failed: {e}")
+    finally:
+        await conn.close()
 
 
 if __name__ == "__main__":

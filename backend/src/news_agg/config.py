@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_base_url: str = "https://us.cloud.langfuse.com"
+    # SearXNG for web search (agentic pipeline)
+    searxng_url: str = "http://localhost:8888"
+    # Meilisearch for full-text article search
+    meilisearch_url: str = "http://localhost:7700"
+    meilisearch_api_key: str = "newsagg-meili-dev-key"
+    # Cloudflare R2 for database snapshots (S3-compatible)
+    r2_endpoint_url: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "newsagg-snapshots"
     # Neo4j for Graphiti knowledge graph
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"

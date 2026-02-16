@@ -61,3 +61,13 @@ class Article(ArticleCreate):
     is_processed: bool = False
     created_at: datetime
     updated_at: datetime
+    # QA tracking (populated by review pipeline)
+    qa_status: str | None = None
+    qa_score: int | None = None
+    qa_issues: list[dict] | None = None
+    category: str | None = None
+    entities: list[str] | None = None
+    location: str | None = None
+    summary: str | None = None
+    reviewed_at: datetime | None = None
+    graph_saved: bool = False

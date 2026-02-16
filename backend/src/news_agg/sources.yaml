@@ -382,13 +382,15 @@ island-en:
     - '\.(jpg|png|pdf)$'
     - '/feed/?$'
 
-  # CSS selectors (WordPress MVP theme)
+  # CSS selectors (WordPress MVP theme — #mvp-content-main has article text only,
+  # #mvp-content-body also includes ads/nav/comments)
   selectors:
     title:
       - h1.mvp-post-title
       - h1.entry-title
       - h1
     content:
+      - "#mvp-content-main"
       - "#mvp-content-body"
       - "#mvp-post-content"
       - .entry-content
@@ -655,13 +657,14 @@ sunday-observer-en:
     - '\.(jpg|png|pdf)$'
     - '/feed/?$'
 
-  # CSS selectors (WordPress Flavor theme)
+  # CSS selectors (WordPress Soledad theme)
   selectors:
     title:
       - h1.post-title
       - h1.entry-title
       - h1
     content:
+      - "#penci-post-entry-inner"
       - .inner-post-entry.entry-content
       - .entry-content
       - article
@@ -1046,12 +1049,14 @@ divaina-si:
     - '/[a-z-]+/?$'
     - '\.(jpg|png|pdf)$'
 
+  # CSS selectors (Foxiz theme — content in .entry-content.rbct inside .s-ct-wrap)
   selectors:
     title:
       - h1
     content:
-      - .article-body
-      - .news-content
+      - .entry-content.rbct
+      - .s-ct-inner .entry-content
+      - .entry-content
       - article
     date:
       - .article-meta

@@ -31,7 +31,17 @@ CREATE TABLE IF NOT EXISTS articles (
     original_language TEXT DEFAULT 'en',
     is_processed BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    -- QA tracking (Phase 2: agentic pipeline)
+    qa_status TEXT DEFAULT NULL,
+    qa_score INTEGER DEFAULT NULL,
+    qa_issues JSONB DEFAULT NULL,
+    category TEXT DEFAULT NULL,
+    entities TEXT[] DEFAULT NULL,
+    location TEXT DEFAULT NULL,
+    summary TEXT DEFAULT NULL,
+    reviewed_at TIMESTAMPTZ DEFAULT NULL,
+    graph_saved BOOLEAN DEFAULT false
 );
 
 -- Indexes for common queries
@@ -40,6 +50,9 @@ CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at DESC)
 CREATE INDEX IF NOT EXISTS idx_articles_language ON articles(language);
 CREATE INDEX IF NOT EXISTS idx_articles_created ON articles(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_is_processed ON articles(is_processed) WHERE NOT is_processed;
+CREATE INDEX IF NOT EXISTS idx_articles_unreviewed ON articles(id) WHERE qa_status IS NULL;
+CREATE INDEX IF NOT EXISTS idx_articles_qa_status ON articles(qa_status);
+CREATE INDEX IF NOT EXISTS idx_articles_graph_unsaved ON articles(id) WHERE qa_status = 'pass' AND graph_saved = false;
 
 -- Seed: news sources
 INSERT INTO sources (name, slug, url, rss_url, language) VALUES
@@ -70,6 +83,23 @@ INSERT INTO sources (name, slug, url, rss_url, language) VALUES
     ('News.lk', 'news-lk-en', 'https://news.lk', NULL, 'en'),
     ('Ada.lk', 'ada-si', 'https://www.ada.lk', NULL, 'si')
 ON CONFLICT (slug) DO NOTHING;
+
+-- Agent run history (Phase 2: agentic pipeline)
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    thread_id TEXT NOT NULL,
+    config JSONB DEFAULT '{}',
+    result JSONB DEFAULT '{}',
+    decisions JSONB DEFAULT '[]',
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ DEFAULT NULL,
+    error_message TEXT DEFAULT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_started ON agent_runs(started_at DESC);
 
 -- Dead links: track failed scrape URLs with graduated retry
 CREATE TABLE IF NOT EXISTS dead_links (

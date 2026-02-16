@@ -173,7 +173,7 @@ _EXTRACT_JS = """
     // Content — clone element and strip scripts/styles/ads before reading text
     function cleanTextContent(el) {
         const clone = el.cloneNode(true);
-        clone.querySelectorAll('script, style, noscript, iframe, nav, header, footer, aside, .navbar, .navigation, .menu, .google-auto-placed, .adsbygoogle, [id*="google_ads"], [class*="social"], .share-buttons, .comments-section, #aiSummaryBox, .ai-quickread-box, .ai-quickread, .ai-qr-title, .ai-qr-subtitle, .ai-quickread-badge, .ai-quickread-hide, .ai-quickread-loading, .fotorama, figure figcaption').forEach(n => n.remove());
+        clone.querySelectorAll('script, style, noscript, iframe, nav, header, footer, aside, .navbar, .navigation, .menu, .google-auto-placed, .adsbygoogle, [id*="google_ads"], [class*="social"], [class*="sharethis"], .st-total, .share-buttons, .comments-section, #aiSummaryBox, .ai-quickread-box, .ai-quickread, .ai-qr-title, .ai-qr-subtitle, .ai-quickread-badge, .ai-quickread-hide, .ai-quickread-loading, .fotorama, figure figcaption').forEach(n => n.remove());
         return clone.textContent?.trim() || '';
     }
 

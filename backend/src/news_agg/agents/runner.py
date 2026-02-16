@@ -17,7 +17,13 @@ from news_agg.agents.chains import build_categorize_chain, build_qa_chain
 from news_agg.agents.models import CategoryResult, QAReport
 from news_agg.agents.tracing import get_langfuse_handler
 from news_agg.agents.knowledge import add_article_to_graph, close_graphiti_client
-from news_agg.db import fetch_random_articles, get_pool, close_pool
+from news_agg.db import (
+    fetch_random_articles,
+    get_pool,
+    get_unreviewed_articles,
+    close_pool,
+    update_article_qa,
+)
 from news_agg.utils.logging import get_logger, GREEN, YELLOW, RED, BOLD, DIM, RESET
 
 log = get_logger()
@@ -167,8 +173,12 @@ async def run_review(
     prompt_version: str = "v1",
     categorize_only: bool = False,
     save_to_graph: bool = False,
-) -> None:
-    """Main entry point: sample articles → review → report → optionally save to graph."""
+    unreviewed: bool = False,
+) -> dict:
+    """Main entry point: sample articles → review → report → optionally save to graph.
+
+    Returns a summary dict: {total, passes, warns, fails, errors, graph_saved}.
+    """
     pool = await get_pool()
 
     # Initialize Langfuse tracing (returns None if not configured)
@@ -176,11 +186,14 @@ async def run_review(
     invoke_config = {"callbacks": [langfuse_handler]} if langfuse_handler else {}
 
     try:
-        # Sample articles
-        articles = await fetch_random_articles(pool, sample, source, since)
+        # Fetch articles: either unreviewed (for agent) or random sample (CLI)
+        if unreviewed:
+            articles = await get_unreviewed_articles(pool, sample, source)
+        else:
+            articles = await fetch_random_articles(pool, sample, source, since)
         if not articles:
             log.warning(f"{YELLOW}No articles found matching filters{RESET}")
-            return
+            return {"total": 0, "passes": 0, "warns": 0, "fails": 0, "errors": 0, "graph_saved": 0}
 
         log.info(f"{BOLD}REVIEW{RESET} — {len(articles)} articles (prompt={prompt_version})")
         if source:
@@ -208,8 +221,29 @@ async def run_review(
             )
             results.append(result)
 
-            # Save to knowledge graph if article passed QA and was categorized
+            # Persist QA results to database
             article_data, qa_report, cat_result = result
+            if qa_report and article_data.get("id"):
+                try:
+                    qa_issues_dicts = [
+                        {"type": iss.type, "severity": iss.severity, "description": iss.description}
+                        for iss in (qa_report.issues or [])
+                    ]
+                    await update_article_qa(
+                        pool,
+                        article_data["id"],
+                        qa_status=qa_report.status,
+                        qa_score=qa_report.content_quality_score,
+                        qa_issues=qa_issues_dicts if qa_issues_dicts else None,
+                        category=cat_result.category if cat_result else None,
+                        entities=cat_result.entities if cat_result else None,
+                        location=cat_result.location if cat_result else None,
+                        summary=cat_result.summary if cat_result else None,
+                    )
+                except Exception as e:
+                    log.error(f"  {RED}✗{RESET} Failed to persist QA result: {e}")
+
+            # Save to knowledge graph if article passed QA and was categorized
             if save_to_graph and cat_result:
                 should_save = categorize_only or (qa_report and qa_report.status == "pass")
                 if should_save:
@@ -222,6 +256,29 @@ async def run_review(
         log.info("")
 
         _print_report(results, graph_count)
+
+        # Build summary for programmatic callers (agent tools)
+        passes = warns = fails = errors = 0
+        for _, qa, cat in results:
+            if qa is None and cat is None:
+                errors += 1
+            elif qa:
+                if qa.status == "pass":
+                    passes += 1
+                elif qa.status == "warn":
+                    warns += 1
+                else:
+                    fails += 1
+            else:
+                passes += 1
+        return {
+            "total": len(results),
+            "passes": passes,
+            "warns": warns,
+            "fails": fails,
+            "errors": errors,
+            "graph_saved": graph_count,
+        }
 
     finally:
         await close_pool()

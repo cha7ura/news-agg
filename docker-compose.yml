@@ -81,6 +81,29 @@ services:
       - "8118:8118"    # HTTP proxy (Privoxy)
     restart: unless-stopped
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    container_name: newsagg-meilisearch
+    environment:
+      - MEILI_ENV=development
+      - MEILI_MASTER_KEY=newsagg-meili-dev-key
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: newsagg-searxng
+    ports:
+      - "8888:8080"
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888
+    volumes:
+      - ./docker/searxng:/etc/searxng
+    restart: unless-stopped
+
   neo4j:
     image: neo4j:5.26-community
     container_name: news-agg-neo4j
@@ -98,3 +121,4 @@ services:
 volumes:
   postgres_data:
   neo4j_data:
+  meili_data:
