@@ -533,3 +533,127 @@ async def get_dead_link_stats(pool: asyncpg.Pool) -> list[dict]:
         """
     )
     return [dict(r) for r in rows]
+
+
+# --- Stories ---
+
+async def _attach_story_sources(pool: asyncpg.Pool, stories: list[dict]) -> None:
+    """Batch-fetch source info and attach to each story dict."""
+    story_ids = [s["id"] for s in stories]
+    if not story_ids:
+        return
+    source_rows = await pool.fetch(
+        """
+        SELECT a.story_id, src.name, src.slug
+        FROM articles a
+        JOIN sources src ON src.id = a.source_id
+        WHERE a.story_id = ANY($1::uuid[])
+        GROUP BY a.story_id, src.name, src.slug
+        """,
+        story_ids,
+    )
+    sources_by_story: dict = {}
+    for r in source_rows:
+        sources_by_story.setdefault(r["story_id"], []).append(
+            {"name": r["name"], "slug": r["slug"]}
+        )
+    for story in stories:
+        story["sources"] = sources_by_story.get(story["id"], [])
+
+
+async def get_stories(
+    pool: asyncpg.Pool,
+    date: str | None = None,
+    category: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Get stories with optional filters. Returns (stories, total_count)."""
+    conditions: list[str] = []
+    params: list = []
+    idx = 1
+
+    if date:
+        conditions.append(f"DATE(s.first_published_at) = ${idx}::date")
+        params.append(date)
+        idx += 1
+
+    if category:
+        conditions.append(f"s.category = ${idx}")
+        params.append(category)
+        idx += 1
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    # Count
+    count = await pool.fetchval(
+        f"SELECT COUNT(*) FROM stories s {where}", *params
+    )
+
+    # Fetch stories
+    params.extend([limit, offset])
+    rows = await pool.fetch(
+        f"""
+        SELECT s.*
+        FROM stories s
+        {where}
+        ORDER BY s.last_updated_at DESC NULLS LAST
+        LIMIT ${idx} OFFSET ${idx + 1}
+        """,
+        *params,
+    )
+    stories = [dict(r) for r in rows]
+    await _attach_story_sources(pool, stories)
+    return stories, count
+
+
+async def get_today_stories(pool: asyncpg.Pool) -> list[dict]:
+    """Get today's stories ordered by article_count (most covered first)."""
+    rows = await pool.fetch(
+        """
+        SELECT s.*
+        FROM stories s
+        WHERE DATE(s.first_published_at) = CURRENT_DATE
+           OR DATE(s.last_updated_at) = CURRENT_DATE
+        ORDER BY s.article_count DESC, s.last_updated_at DESC
+        LIMIT 50
+        """
+    )
+    stories = [dict(r) for r in rows]
+    await _attach_story_sources(pool, stories)
+    return stories
+
+
+async def get_story_detail(pool: asyncpg.Pool, story_id: UUID) -> dict | None:
+    """Get a single story with all its articles."""
+    row = await pool.fetchrow("SELECT * FROM stories WHERE id = $1", story_id)
+    if not row:
+        return None
+
+    story = dict(row)
+
+    # Fetch all articles in this story
+    article_rows = await pool.fetch(
+        """
+        SELECT a.id, a.title, a.content, a.excerpt, a.url, a.author,
+               a.published_at, a.image_url, a.language, a.category,
+               a.entities, a.location, a.summary, a.qa_score,
+               s.name as source_name, s.slug as source_slug
+        FROM articles a
+        JOIN sources s ON s.id = a.source_id
+        WHERE a.story_id = $1
+        ORDER BY a.qa_score DESC NULLS LAST, a.published_at ASC
+        """,
+        story_id,
+    )
+    story["articles"] = [dict(r) for r in article_rows]
+
+    # Source list (sorted deterministically by name)
+    story["sources"] = sorted(
+        [{"name": n, "slug": s} for n, s in {
+            (a["source_name"], a["source_slug"]) for a in story["articles"]
+        }],
+        key=lambda x: x["name"],
+    )
+
+    return story

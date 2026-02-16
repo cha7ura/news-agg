@@ -6,6 +6,7 @@ Usage:
     news-agg ingest --source ada-derana-en --backfill --pages 10 --concurrency 5
     news-agg ingest --source ada-derana-en --nid-sweep --concurrency 5
     news-agg ingest --source newsfirst-en --limit 5 --supabase
+    news-agg cluster --hours 48 --threshold 0.72
     news-agg check --supabase
     news-agg migrate
     news-agg backup
@@ -97,6 +98,25 @@ async def _ingest(
             click.echo(f"Error: {result['error']}")
     finally:
         await close_pool()
+
+
+@cli.command()
+@click.option("--hours", default=48, help="Look back N hours for unclustered articles")
+@click.option("--threshold", default=0.72, help="Cosine similarity threshold (0.0-1.0)")
+@click.option("--supabase", is_flag=True, help="Use Supabase DB instead of local")
+def cluster(hours: int, threshold: float, supabase: bool) -> None:
+    """Cluster articles into stories using embedding similarity."""
+    if supabase:
+        _use_supabase()
+    asyncio.run(_cluster(hours, threshold))
+
+
+async def _cluster(hours: int, threshold: float) -> None:
+    from news_agg.clustering import cluster_recent_articles
+
+    result = await cluster_recent_articles(hours=hours, threshold=threshold)
+    if result["stories_created"] == 0 and result["articles_assigned"] == 0:
+        click.echo("No new clusters formed.")
 
 
 @cli.command("run")

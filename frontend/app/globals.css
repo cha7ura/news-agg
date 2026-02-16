@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Backgrounds */
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-raised: #1c2128;
+  --surface-overlay: #21262d;
+
+  /* Borders */
+  --border: #30363d;
+  --border-subtle: #21262d;
+
+  /* Text */
+  --text: #c9d1d9;
+  --text-secondary: #8b949e;
+  --text-muted: #484f58;
+
+  /* Accents */
+  --accent: #d4a017;
+  --accent-hover: #e0b030;
+  --accent-blue: #58a6ff;
+
+  /* Status */
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), "SF Mono", "Fira Code", monospace;
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Selection */
+::selection {
+  background: rgba(212, 160, 23, 0.3);
+  color: var(--text);
+}
+
+/* Focus ring */
+@layer utilities {
+  .focus-ring {
+    @apply outline-none ring-2 ring-accent/50 ring-offset-2 ring-offset-bg;
+  }
+}
