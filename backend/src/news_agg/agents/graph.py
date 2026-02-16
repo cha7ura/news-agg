@@ -36,7 +36,7 @@ def _build_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=settings.openrouter_model,
         api_key=settings.openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
+        base_url=settings.llm_base_url,
         temperature=0.1,
     )
 

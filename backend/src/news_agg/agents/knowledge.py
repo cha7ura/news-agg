@@ -74,7 +74,7 @@ async def get_graphiti_client():
             api_key=settings.openrouter_api_key,
             model=settings.openrouter_model,
             small_model=settings.openrouter_model,
-            base_url="https://openrouter.ai/api/v1",
+            base_url=settings.llm_base_url,
         )
         llm_client = OpenAIGenericClient(config=llm_config)
 

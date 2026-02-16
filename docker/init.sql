@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS articles (
     location TEXT DEFAULT NULL,
     summary TEXT DEFAULT NULL,
     reviewed_at TIMESTAMPTZ DEFAULT NULL,
+    reviewed_by TEXT DEFAULT NULL,
     graph_saved BOOLEAN DEFAULT false
 );
 

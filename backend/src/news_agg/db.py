@@ -273,6 +273,7 @@ async def update_article_qa(
     entities: list[str] | None = None,
     location: str | None = None,
     summary: str | None = None,
+    reviewed_by: str | None = None,
 ) -> None:
     """Persist QA review results on an article row."""
     import json
@@ -287,7 +288,8 @@ async def update_article_qa(
             entities = $6,
             location = $7,
             summary = $8,
-            reviewed_at = NOW()
+            reviewed_at = NOW(),
+            reviewed_by = $9
         WHERE id = $1
         """,
         article_id,
@@ -298,6 +300,7 @@ async def update_article_qa(
         entities,
         location,
         summary,
+        reviewed_by,
     )
 
 

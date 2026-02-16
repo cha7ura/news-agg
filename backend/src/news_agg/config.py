@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # OpenRouter LLM config for article QA review agents
     openrouter_api_key: str = ""
     openrouter_model: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    # LLM base URL — change to switch provider (Ollama, LM Studio, etc.)
+    llm_base_url: str = "https://openrouter.ai/api/v1"
     # Langfuse Cloud observability
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

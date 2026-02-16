@@ -14,6 +14,7 @@ import json
 import time
 
 from news_agg.agents.chains import build_categorize_chain, build_qa_chain
+from news_agg.config import settings
 from news_agg.agents.models import CategoryResult, QAReport
 from news_agg.agents.tracing import get_langfuse_handler
 from news_agg.agents.knowledge import add_article_to_graph, close_graphiti_client
@@ -239,6 +240,7 @@ async def run_review(
                         entities=cat_result.entities if cat_result else None,
                         location=cat_result.location if cat_result else None,
                         summary=cat_result.summary if cat_result else None,
+                        reviewed_by=settings.openrouter_model,
                     )
                 except Exception as e:
                     log.error(f"  {RED}✗{RESET} Failed to persist QA result: {e}")
