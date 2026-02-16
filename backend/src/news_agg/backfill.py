@@ -135,7 +135,10 @@ async def _crawl_archive_pages(
                 except Exception as e:
                     log.error(f"  {RED}✗{RESET} Archive {section} page {i + 1} failed: {e}")
                 finally:
-                    await ctx.close()
+                    try:
+                        await ctx.close()
+                    except Exception:
+                        pass
     else:
         # Shared context — fast path for non-Cloudflare sources
         context = await create_context(browser)
@@ -192,7 +195,10 @@ async def _crawl_archive_pages(
 
             await page.close()
         finally:
-            await context.close()
+            try:
+                await context.close()
+            except Exception:
+                pass
 
     return all_items
 
@@ -544,7 +550,10 @@ async def run_nid_sweep(
                             f"({inserted} inserted, {skipped} skipped, {not_found} 404s){RESET}"
                         )
 
-                await context.close()
+                try:
+                    await context.close()
+                except Exception:
+                    pass
 
                 total_inserted += inserted
                 total_skipped += skipped
@@ -696,7 +705,10 @@ async def run_date_sweep(
 
                 await page.close()
             finally:
-                await context.close()
+                try:
+                    await context.close()
+                except Exception:
+                    pass
 
             if not all_items:
                 log.info(f"  {DIM}No new articles found across {total_days} days{RESET}")
@@ -906,7 +918,10 @@ async def run_auto_backfill(
                 total_not_found += result.get("not_found", 0)
 
     finally:
-        await browser.close()
+        try:
+            await browser.close()
+        except Exception:
+            pass
         await close_playwright()
 
     log.info(
