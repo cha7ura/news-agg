@@ -6,7 +6,7 @@ Ported from ground-news Supabase queries in pipeline.ts lines 940-1190.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date as date_type, datetime, timedelta, timezone
 from uuid import UUID
 
 import asyncpg
@@ -657,3 +657,48 @@ async def get_story_detail(pool: asyncpg.Pool, story_id: UUID) -> dict | None:
     )
 
     return story
+
+
+# --- Coverage Audit ---
+
+async def get_coverage_grid(
+    pool: asyncpg.Pool,
+    since: str,
+    until: str,
+    source_slug: str | None = None,
+) -> list[dict]:
+    """Per-source, per-day article counts for a date range.
+
+    Returns rows of {slug, language, date, count}.
+    Uses generate_series to include zero-count days.
+    """
+    # asyncpg needs date objects, not strings
+    since_date = date_type.fromisoformat(since) if isinstance(since, str) else since
+    until_date = date_type.fromisoformat(until) if isinstance(until, str) else until
+
+    conditions = ["TRUE"]
+    params: list = [since_date, until_date]
+    idx = 3
+
+    if source_slug:
+        conditions.append(f"s.slug = ${idx}")
+        params.append(source_slug)
+        idx += 1
+
+    where = " AND ".join(conditions)
+
+    rows = await pool.fetch(
+        f"""
+        SELECT s.slug, s.language, d.date, COUNT(a.id) as count
+        FROM sources s
+        CROSS JOIN generate_series($1::date, $2::date, '1 day'::interval) AS d(date)
+        LEFT JOIN articles a
+            ON a.source_id = s.id
+            AND a.published_at::date = d.date
+        WHERE s.is_active = true AND {where}
+        GROUP BY s.slug, s.language, d.date
+        ORDER BY s.slug, d.date
+        """,
+        *params,
+    )
+    return [dict(r) for r in rows]

@@ -7,6 +7,7 @@ Usage:
     news-agg ingest --source ada-derana-en --nid-sweep --concurrency 5
     news-agg ingest --source newsfirst-en --limit 5 --supabase
     news-agg cluster --hours 48 --threshold 0.72
+    news-agg gaps --month 2026-02
     news-agg check --supabase
     news-agg migrate
     news-agg backup
@@ -17,11 +18,13 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import csv as csv_mod
 import signal
+from datetime import date as date_type, timedelta
 
 import click
 
-from news_agg.utils.logging import GREEN, BOLD, DIM, RESET, get_logger
+from news_agg.utils.logging import GREEN, RED, BOLD, DIM, RESET, get_logger
 
 log = get_logger()
 
@@ -1079,6 +1082,142 @@ def snapshot_list(limit: int) -> None:
     for s in snapshots:
         click.echo(f"  {s['type']:<12} {s['key']:<45} {s['size_mb']:>6.1f}MB {s['last_modified']}")
     click.echo()
+
+
+@cli.command()
+@click.option("--month", default=None, help="Month to check (YYYY-MM, default: current)")
+@click.option("--since", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--until", "until_date", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--source", default=None, help="Filter to one source slug")
+@click.option("--min-days", default=0, help="Only show sources with >= N gap days")
+@click.option("--csv", "csv_file", default=None, help="Export to CSV file")
+def gaps(month: str | None, since: str | None, until_date: str | None, source: str | None, min_days: int, csv_file: str | None) -> None:
+    """Show per-source, per-day article coverage and highlight gaps."""
+    asyncio.run(_gaps(month, since, until_date, source, min_days, csv_file))
+
+
+async def _gaps(
+    month: str | None,
+    since: str | None,
+    until_date: str | None,
+    source: str | None,
+    min_days: int,
+    csv_file: str | None,
+) -> None:
+    from news_agg.db import get_coverage_grid, get_pool, close_pool
+
+    # Resolve date range
+    if since and until_date:
+        start, end = since, until_date
+    elif month:
+        y, m = int(month[:4]), int(month[5:7])
+        start = f"{y:04d}-{m:02d}-01"
+        if m == 12:
+            end_dt = date_type(y + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_dt = date_type(y, m + 1, 1) - timedelta(days=1)
+        end = end_dt.isoformat()
+    else:
+        today = date_type.today()
+        start = f"{today.year:04d}-{today.month:02d}-01"
+        end = today.isoformat()
+
+    pool = await get_pool()
+    try:
+        rows = await get_coverage_grid(pool, since=start, until=end, source_slug=source)
+    finally:
+        await close_pool()
+
+    if not rows:
+        click.echo("No data found.")
+        return
+
+    # CSV export
+    if csv_file:
+        with open(csv_file, "w", newline="") as f:
+            writer = csv_mod.writer(f)
+            writer.writerow(["source_slug", "language", "date", "article_count"])
+            for r in rows:
+                d = str(r["date"])[:10]
+                writer.writerow([r["slug"], r["language"], d, r["count"]])
+        click.echo(f"  {GREEN}✓{RESET} Exported {len(rows)} rows to {csv_file}")
+        return
+
+    # Build heatmap data structure
+    dates: list[str] = []
+    sources_data: dict[str, dict] = {}
+
+    for r in rows:
+        d = str(r["date"])[:10]
+        if d not in dates:
+            dates.append(d)
+        slug = r["slug"]
+        if slug not in sources_data:
+            sources_data[slug] = {"lang": r["language"], "dates": {}}
+        sources_data[slug]["dates"][d] = r["count"]
+
+    # Filter by min_days
+    if min_days > 0:
+        sources_data = {
+            slug: data
+            for slug, data in sources_data.items()
+            if sum(1 for d in dates if data["dates"].get(d, 0) == 0) >= min_days
+        }
+
+    if not sources_data:
+        click.echo("No sources match the filter.")
+        return
+
+    # Print header
+    click.echo(f"\n{BOLD}Coverage Report: {start} → {end}{RESET}\n")
+
+    slug_w = max(len(s) for s in sources_data) + 1
+    day_labels = [d[-2:] for d in dates]
+
+    header = f"  {'Source':<{slug_w}} │ " + " ".join(f"{dl:>3}" for dl in day_labels) + " │ Total  Avg"
+    click.echo(header)
+    click.echo(f"  {'─' * slug_w}─┼─" + "─" * (len(dates) * 4) + "┼────────────")
+
+    for slug in sorted(sources_data):
+        data = sources_data[slug]
+        cells = []
+        total = 0
+        for d in dates:
+            count = data["dates"].get(d, 0)
+            total += count
+            if count == 0:
+                cells.append(f"{RED}  -{RESET}")
+            elif count < 5:
+                cells.append(f"{DIM}{count:>3}{RESET}")
+            else:
+                cells.append(f"{GREEN}{count:>3}{RESET}")
+        avg = total / len(dates) if dates else 0
+        line = f"  {slug:<{slug_w}} │ " + " ".join(cells) + f" │ {total:>5} {avg:>5.1f}"
+        click.echo(line)
+
+    # Summary
+    total_all = sum(
+        data["dates"].get(d, 0)
+        for data in sources_data.values()
+        for d in dates
+    )
+    total_gaps = sum(
+        1
+        for data in sources_data.values()
+        for d in dates
+        if data["dates"].get(d, 0) == 0
+    )
+    total_cells = len(sources_data) * len(dates)
+    click.echo(f"  {'─' * slug_w}─┼─" + "─" * (len(dates) * 4) + "┼────────────")
+    click.echo(
+        f"\n  {BOLD}Total:{RESET} {total_all:,} articles across {len(sources_data)} sources, "
+        f"{len(dates)} days"
+    )
+    click.echo(
+        f"  {BOLD}Gaps:{RESET} {total_gaps} source-days with zero articles "
+        f"({total_gaps}/{total_cells} = "
+        f"{total_gaps / total_cells * 100:.0f}%)\n"
+    )
 
 
 @cli.command("db-migrate")
