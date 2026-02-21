@@ -5,6 +5,7 @@ import type {
   MeiliSearchResult,
   AskResponse,
   DashboardStats,
+  MonthlySourceCount,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -91,4 +92,10 @@ export async function askQuestion(params: {
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   return fetchJSON("/dashboard/stats");
+}
+
+export async function getMonthlyStats(
+  months: number = 6
+): Promise<{ data: MonthlySourceCount[] }> {
+  return fetchJSON(`/stats/monthly?months=${months}`);
 }

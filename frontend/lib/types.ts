@@ -80,6 +80,14 @@ export interface SourceStats {
   latest_article: string | null;
 }
 
+export interface MonthlySourceCount {
+  slug: string;
+  name: string;
+  language: string;
+  month: string;
+  count: number;
+}
+
 export interface DashboardStats {
   totals: {
     articles: number;

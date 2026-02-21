@@ -375,11 +375,13 @@ async def run_nid_sweep(
     source_slug: str | None = None,
     concurrency: int = 3,
     browser=None,
+    reverse: bool = False,
 ) -> dict:
     """Sweep through sequential NID ranges to discover every article.
 
-    Iterates from start to end nid, navigates to each URL, captures the
-    canonical URL after redirects, and scrapes if not already in DB.
+    Iterates from start to end nid (or end to start when reverse=True),
+    navigates to each URL, captures the canonical URL after redirects,
+    and scrapes if not already in DB.
     Stops a sweep pattern after max_consecutive_404 misses.
     """
     pool = await get_pool()
@@ -427,9 +429,13 @@ async def run_nid_sweep(
                 end = sweep["end"]
                 max_404 = sweep.get("max_consecutive_404", 50)
 
+                direction = "↓" if reverse else "→"
                 log.info(
                     f"{BOLD}NID SWEEP{RESET} — {source.name} "
-                    f"nid {start}→{end} ({end - start + 1} to check)"
+                    f"nid {end}{direction}{start} ({end - start + 1} to check)"
+                    if reverse else
+                    f"{BOLD}NID SWEEP{RESET} — {source.name} "
+                    f"nid {start}{direction}{end} ({end - start + 1} to check)"
                 )
 
                 context = await create_context(browser)
@@ -444,9 +450,19 @@ async def run_nid_sweep(
 
                 # Process in batches to show progress and manage memory
                 batch_size = 50
-                for batch_start in range(start, end + 1, batch_size):
-                    batch_end = min(batch_start + batch_size, end + 1)
-                    nids = list(range(batch_start, batch_end))
+                if reverse:
+                    # Iterate from end downward — finds recent articles first
+                    batch_ranges = range(end, start - 1, -batch_size)
+                else:
+                    batch_ranges = range(start, end + 1, batch_size)
+
+                for batch_anchor in batch_ranges:
+                    if reverse:
+                        batch_lo = max(batch_anchor - batch_size + 1, start)
+                        nids = list(range(batch_anchor, batch_lo - 1, -1))
+                    else:
+                        batch_hi = min(batch_anchor + batch_size, end + 1)
+                        nids = list(range(batch_anchor, batch_hi))
 
                     # Quick pre-filter: skip nids whose URL is already in DB or dead
                     nids_to_check = []
@@ -538,15 +554,16 @@ async def run_nid_sweep(
 
                     if consecutive_404 >= max_404:
                         log.info(
-                            f"  {YELLOW}–{RESET} {max_404} consecutive 404s at nid={batch_start} "
+                            f"  {YELLOW}–{RESET} {max_404} consecutive 404s at nid={batch_anchor} "
                             f"— stopping sweep"
                         )
                         break
 
                     # Batch progress
-                    if (batch_start - start) % 500 == 0 and batch_start > start:
+                    progress_ref = abs(batch_anchor - (end if reverse else start))
+                    if progress_ref % 500 == 0 and progress_ref > 0:
                         log.info(
-                            f"  {DIM}Sweep progress: nid {batch_start}/{end} "
+                            f"  {DIM}Sweep progress: nid {batch_anchor}/{start if reverse else end} "
                             f"({inserted} inserted, {skipped} skipped, {not_found} 404s){RESET}"
                         )
 
@@ -797,6 +814,7 @@ async def run_auto_backfill(
     concurrency: int = 3,
     pages: int | None = None,
     days: int | None = None,
+    reverse: bool = False,
 ) -> dict:
     """Config-driven backfill — automatically runs the right methods for each source.
 
@@ -834,7 +852,7 @@ async def run_auto_backfill(
         )
 
         for method in methods:
-            result = await _run_single_method(source, method, concurrency, pages, days)
+            result = await _run_single_method(source, method, concurrency, pages, days, reverse)
             total_inserted += result.get("inserted", 0)
             total_skipped += result.get("skipped", 0)
             total_not_found += result.get("not_found", 0)
@@ -894,7 +912,7 @@ async def run_auto_backfill(
         for source in nid_sweep_sources:
             log.info(f"  {DIM}Starting NID sweep for {source.slug} (concurrency={sweep_concurrency})...{RESET}")
             tasks.append(asyncio.create_task(
-                run_nid_sweep(source.slug, sweep_concurrency, browser=browser)
+                run_nid_sweep(source.slug, sweep_concurrency, browser=browser, reverse=reverse)
             ))
 
         # Date sweeps — all run concurrently
@@ -933,7 +951,7 @@ async def run_auto_backfill(
 
 async def _run_single_method(
     source: Source, method: dict, concurrency: int,
-    pages: int | None, days: int | None,
+    pages: int | None, days: int | None, reverse: bool = False,
 ) -> dict:
     """Run a single backfill method for one source."""
     method_type = method["type"]
@@ -943,8 +961,8 @@ async def _run_single_method(
         log.info(f"  {DIM}Running archive crawl ({archive_pages} pages)...{RESET}")
         result = await run_backfill(source.slug, archive_pages, concurrency)
     elif method_type == "nid_sweep":
-        log.info(f"  {DIM}Running NID sweep...{RESET}")
-        result = await run_nid_sweep(source.slug, concurrency)
+        log.info(f"  {DIM}Running NID sweep{'  (reverse)' if reverse else ''}...{RESET}")
+        result = await run_nid_sweep(source.slug, concurrency, reverse=reverse)
     elif method_type == "date_sweep":
         sweep_days = days or method.get("days")
         log.info(f"  {DIM}Running date sweep...{RESET}")

@@ -187,6 +187,27 @@ async def get_article_stats(pool: asyncpg.Pool) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_monthly_article_counts(
+    pool: asyncpg.Pool,
+    months: int = 6,
+) -> list[dict]:
+    """Monthly article counts per source for the last N months."""
+    rows = await pool.fetch(
+        """
+        SELECT s.slug, s.name, s.language,
+               TO_CHAR(DATE_TRUNC('month', a.published_at), 'YYYY-MM') as month,
+               COUNT(*) as count
+        FROM articles a
+        JOIN sources s ON s.id = a.source_id
+        WHERE a.published_at >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month' * ($1 - 1)
+        GROUP BY s.slug, s.name, s.language, DATE_TRUNC('month', a.published_at)
+        ORDER BY month, s.slug
+        """,
+        months,
+    )
+    return [dict(r) for r in rows]
+
+
 async def get_articles(
     pool: asyncpg.Pool,
     source_slug: str | None = None,

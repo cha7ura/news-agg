@@ -114,6 +114,18 @@ async def stats():
     return {"sources": _serialize(rows)}
 
 
+@app.get("/stats/monthly")
+async def monthly_stats(
+    months: int = Query(6, ge=1, le=24, description="Number of months to include"),
+):
+    """Monthly article counts per source."""
+    from news_agg.db import get_monthly_article_counts
+
+    pool = await get_pool()
+    rows = await get_monthly_article_counts(pool, months)
+    return {"data": _serialize(rows)}
+
+
 def _serialize_val(val):
     """Recursively convert UUID/datetime values to JSON-safe strings."""
     if hasattr(val, "hex"):

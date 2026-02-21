@@ -5,6 +5,7 @@ Usage:
     news-agg ingest --source ada-derana-si --limit 20 --concurrency 3
     news-agg ingest --source ada-derana-en --backfill --pages 10 --concurrency 5
     news-agg ingest --source ada-derana-en --nid-sweep --concurrency 5
+    news-agg ingest --source ft-en --nid-sweep --reverse --concurrency 3
     news-agg ingest --source newsfirst-en --limit 5 --supabase
     news-agg cluster --hours 48 --threshold 0.72
     news-agg gaps --month 2026-02
@@ -44,12 +45,13 @@ def cli() -> None:
 @click.option("--nid-sweep", is_flag=True, help="Sweep through sequential article IDs for full coverage")
 @click.option("--date-sweep", is_flag=True, help="Sweep through calendar dates for date-based archive pages")
 @click.option("--days", default=None, type=int, help="Limit date sweep to last N days (default: full range)")
+@click.option("--reverse", is_flag=True, help="NID sweep from highest ID downward (finds recent articles first)")
 @click.option("--supabase", is_flag=True, help="Use Supabase DB instead of local")
-def ingest(source: str | None, limit: int, concurrency: int, backfill: bool, pages: int, nid_sweep: bool, date_sweep: bool, days: int | None, supabase: bool) -> None:
+def ingest(source: str | None, limit: int, concurrency: int, backfill: bool, pages: int, nid_sweep: bool, date_sweep: bool, days: int | None, reverse: bool, supabase: bool) -> None:
     """Ingest articles from news sources."""
     if supabase:
         _use_supabase()
-    asyncio.run(_ingest(source, limit, concurrency, backfill, pages, nid_sweep, date_sweep, days))
+    asyncio.run(_ingest(source, limit, concurrency, backfill, pages, nid_sweep, date_sweep, days, reverse))
 
 
 async def _ingest(
@@ -61,6 +63,7 @@ async def _ingest(
     nid_sweep: bool = False,
     date_sweep: bool = False,
     days: int | None = None,
+    reverse: bool = False,
 ) -> None:
     from news_agg.db import close_pool
 
@@ -79,6 +82,7 @@ async def _ingest(
             result = await run_nid_sweep(
                 source_slug=source_slug,
                 concurrency=concurrency,
+                reverse=reverse,
             )
         elif backfill:
             from news_agg.backfill import run_auto_backfill
@@ -88,6 +92,7 @@ async def _ingest(
                 concurrency=concurrency,
                 pages=pages,
                 days=days,
+                reverse=reverse,
             )
         else:
             from news_agg.pipeline import run_ingest
